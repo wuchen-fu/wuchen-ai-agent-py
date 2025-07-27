@@ -29,7 +29,7 @@ chatModel = ChatOpenAI(
 # 提示词模板
 prompt_template = ChatPromptTemplate.from_messages([
     ('system', '你是一个智能助手。尽你所能解决我的问题'),
-    # MessagesPlaceholder来插入之前的对话历史
+    # MessagesPlaceholder 占位插入消息类型
     MessagesPlaceholder(variable_name='user_msg'),
     # ('human', '{user_msg}'),
 ])
