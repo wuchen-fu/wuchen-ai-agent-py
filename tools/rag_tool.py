@@ -17,7 +17,8 @@ load_dotenv(dotenv_path=dotenv_path)
 # 全局变量
 vector_store = None
 store_initialized = False
-PERSIST_DIR = os.path.abspath("./chroma_db")
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+PERSIST_DIR = os.path.join(PROJECT_ROOT, "chroma_db")
 EMBEDDING_MODEL = "sentence-transformers/all-mpnet-base-v2"
 def get_vector_store():
     """

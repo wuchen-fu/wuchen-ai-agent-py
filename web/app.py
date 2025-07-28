@@ -27,17 +27,7 @@ lang_chain_switch = os.getenv('LANGCHAIN_TRACING_V2')
 lang_chain_api_key = os.getenv('LANGCHAIN_API_KEY')
 lang_chain_server_name = os.getenv('LANGCHAIN_PROJECT')
 
-persist_dir = "./chroma_db"
-if os.path.exists(persist_dir):
-    files = os.listdir(persist_dir)
-    logger.info(f"持久化目录存在，包含 {len(files)} 个文件")
-    for file in files:
-        file_path = os.path.join(persist_dir, file)
-        if os.path.isfile(file_path):
-            size = os.path.getsize(file_path)
-            logger.info(f"  文件: {file}, 大小: {size} 字节")
-else:
-    logger.info("持久化目录不存在")
+
 chatModel = ChatOpenAI(
     model=os.getenv('DASH_SCOPE_MODEL'),
     api_key=os.getenv('DASH_SCOPE_API_KEY'),
@@ -63,103 +53,95 @@ prompt_template = ChatPromptTemplate.from_messages([
 ])
 
 vector_store = get_vector_store ()
-try:
-    existing_docs = vector_store.get(limit=10)
-    print(f"当前向量存储中已有 {len(existing_docs.get('ids', []))} 个文档")
-except Exception as e:
-    print(f"检查向量存储状态时出错: {e}")
-
-# 先测试向量存储是否正常工作
-logger.info("测试向量存储...")
-test_docs = vector_store.similarity_search_with_score("我想写小说", k=5)
-logger.info(f"向量存储测试结果: 找到 {len(test_docs)} 个文档")
-for i, doc in enumerate(test_docs):
-    logger.info(f"测试文档 {i+1}: {doc.page_content[:100]}...")
 
 
-# # 提问链路
-# chain1 = create_stuff_documents_chain(chatModel,prompt_template)
-#
-# son_system_prompt = '''
-# 给我一个历史的聊天记录以即用户最新提出的问题。
-# 在我们的聊天记录中引用我们的上下文内容，得到一个独立的问题。
-# 当没有聊天记录的时候，不需要回答这个问题。
-# 直接返回问题就可以了。
-# '''
-# history_prompt_temp = ChatPromptTemplate.from_messages([
-#     ('system', son_system_prompt),
-#     # MessagesPlaceholder 占位插入消息类型
-#     MessagesPlaceholder(variable_name='chat_history'),
-#     ('human', '{input}'),
-# ])
-# # 子链路检索器检索最新的消息和对话历史
-# chain2 = create_history_aware_retriever(chatModel,vector_store.as_retriever(),history_prompt_temp)
-#
-#
-#
-# parser = StrOutputParser()
-# # chain = prompt_template | chatModel
-# # 上下问对话记忆
-# store = {}
-# def get_session_history(session_id: str):
-#     if session_id not in store:
-#         store[session_id] = ChatMessageHistory()
-#     return store[session_id]
-#
-# chain = create_retrieval_chain(chain2,chain1)
-# '''
-# 为指定类型链路添加历史消息，包装其它对象，并可以管理历史消息
-# input_messages_key-指定哪个部分应该在聊天历史中被跟踪和存储
-# history_messages_key-用于指定以前的消息如何注入提示中，当前使用MessagesPlaceholder
-# output_messages_key 指定哪个链路的输出存为历史记录
-# '''
-# do_message = RunnableWithMessageHistory(
-#     chain,
-#     get_session_history,
-#     input_messages_key='input',
-#     history_messages_key = 'chat_history',
-#     output_messages_key='answer'
+# print(vector_store.similarity_search_with_score("我想写小说", k=5))
+
+
+
+# 提问链路
+chain1 = create_stuff_documents_chain(chatModel,prompt_template)
+
+son_system_prompt = '''
+给我一个历史的聊天记录以即用户最新提出的问题。
+在我们的聊天记录中引用我们的上下文内容，得到一个独立的问题。
+当没有聊天记录的时候，不需要回答这个问题。
+直接返回问题就可以了。
+'''
+history_prompt_temp = ChatPromptTemplate.from_messages([
+    ('system', son_system_prompt),
+    # MessagesPlaceholder 占位插入消息类型
+    MessagesPlaceholder(variable_name='chat_history'),
+    ('human', '{input}'),
+])
+# 子链路检索器检索最新的消息和对话历史
+chain2 = create_history_aware_retriever(chatModel,vector_store.as_retriever(),history_prompt_temp)
+
+
+
+parser = StrOutputParser()
+# chain = prompt_template | chatModel
+# 上下问对话记忆
+store = {}
+def get_session_history(session_id: str):
+    if session_id not in store:
+        store[session_id] = ChatMessageHistory()
+    return store[session_id]
+
+chain = create_retrieval_chain(chain2,chain1)
+'''
+为指定类型链路添加历史消息，包装其它对象，并可以管理历史消息
+input_messages_key-指定哪个部分应该在聊天历史中被跟踪和存储
+history_messages_key-用于指定以前的消息如何注入提示中，当前使用MessagesPlaceholder
+output_messages_key 指定哪个链路的输出存为历史记录
+'''
+do_message = RunnableWithMessageHistory(
+    chain,
+    get_session_history,
+    input_messages_key='input',
+    history_messages_key = 'chat_history',
+    output_messages_key='answer'
+)
+
+
+config = {"configurable": {"session_id": "abc2"}}
+def run():
+    print("请说出你的问题(输入exit结束对话)")
+    while True:
+        user = input('')
+        if user.lower() == "exit":
+            break
+        context = '"'+user+'"'
+        resp = do_message.invoke(
+            {
+                'input': context,
+            },
+            config=config,
+        )
+        # for resp in do_message.stream(
+        #         {
+        #             'input': context,
+        #         },
+        #         config=config,
+        # ):
+            # print(resp.content)
+        print(resp['answer'])
+        print()
+
+
+# app = FastAPI(
+#     title='LangChain Chat  Server',
+#     version='1.0',
+#     description='使用LangChain Chat Server 智能助手',
 # )
 #
-#
-# config = {"configurable": {"session_id": "abc2"}}
-# def run():
-#     print("请说出你的问题(输入exit结束对话)")
-#     while True:
-#         user = input('')
-#         if user.lower() == "exit":
-#             break
-#         context = '"'+user+'"'
-#         resp = do_message.invoke(
-#             {
-#                 'input': context,
-#             },
-#             config=config,
-#         )
-#         # for resp in do_message.stream(
-#         #         {
-#         #             'input': context,
-#         #         },
-#         #         config=config,
-#         # ):
-#             # print(resp.content)
-#         print(resp['answer'])
-#         print()
-#
-#
-# # app = FastAPI(
-# #     title='LangChain Chat  Server',
-# #     version='1.0',
-# #     description='使用LangChain Chat Server 智能助手',
-# # )
-# #
-# # add_routes(
-# #     app,
-# #     chain,
-# #     path="/chain",
-# # )
-#
-# if __name__ == '__main__':
-#     # import uvicorn
-#     # uvicorn.run(app, host='localhost', port=8101)
-#     run()
+# add_routes(
+#     app,
+#     chain,
+#     path="/chain",
+# )
+
+if __name__ == '__main__':
+    # import uvicorn
+    # uvicorn.run(app, host='localhost', port=8101)
+    run()
