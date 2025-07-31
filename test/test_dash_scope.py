@@ -9,7 +9,7 @@ import dashscope
 # 获取当前脚本的绝对路径
 # script_path = os.path.abspath(__file__)
 #
-# # 计算项目根目录（向上导航两级：从脚本所在目录 → demo → 项目根目录）
+# # 计算项目根目录（向上导航两级：从脚本所在目录 → test → 项目根目录）
 # # 原代码只导航了两级，现在需要导航三级（如果脚本在demo的子目录中）
 # # 请根据实际目录层级调整dirname的调用次数
 # project_root = os.path.dirname(os.path.dirname(os.path.dirname(script_path)))  # 三次dirname
