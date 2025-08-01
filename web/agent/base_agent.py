@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Optional
 
 from langchain.agents import AgentExecutor
-from langchain.memory import ConversationBufferMemory
+from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
@@ -11,8 +11,6 @@ from langchain_core.runnables import Runnable
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.tools import BaseTool
 
-from chat_memory.chat_history import BaseChatHistory
-from tools.tool_config import ToolConfig
 
 logger = logging.getLogger(__name__)
 
@@ -25,20 +23,23 @@ class BaseAgent(ABC):
     
     def __init__(self, chat_model,
                  prompt_template: ChatPromptTemplate,
-                 chat_memory : BaseChatMessageHistory,
-                 rag_chain: Optional[Runnable] = None):
+                 chat_memory: Optional[BaseChatMessageHistory] = None,
+                 rag_chain: Optional[Runnable] = None,
+                 all_tools: Optional[List[BaseTool]] = None):
         """
         初始化基础智能体
         
         Args:
             chat_model: 聊天模型实例
             prompt_template: 提示词模板
+            chat_memory: 聊天历史存储对象（可选）
             rag_chain: RAG链（可选）
+            all_tools: 工具列表（可选）
         """
         self.chat_model = chat_model
         self.prompt_template = prompt_template
         self.rag_chain = rag_chain
-        self.all_tools = ToolConfig()
+        self.all_tools = all_tools or []
         
         # 创建基础链
         self.chain = prompt_template | chat_model
@@ -47,33 +48,28 @@ class BaseAgent(ABC):
         # 在初始化时将工具绑定到模型
         self._bind_tools_to_model()
         
-        self.memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True
-        )
-        self.history_backend: Optional[BaseChatHistory] = None
-        self.history_map: Dict[str, BaseChatHistory] = {}
+        self.history_backend: Optional[BaseChatMessageHistory] = chat_memory
+        self.history_map: Dict[str, BaseChatMessageHistory] = {}
         
-        # 创建带历史记录的链
-        self.history_chain = RunnableWithMessageHistory(
+        # 最终执行链
+        self.chain_executor = RunnableWithMessageHistory(
             self.chain,
             self.get_session_history,
             input_messages_key="input",
-            history_messages_key="chat_history",
-            output_messages_key="answer"
+            history_messages_key="chat_history"
         )
 
     def _bind_tools_to_model(self):
         """
         将工具绑定到模型
         """
-        tools = self.all_tools.get_tools()
-        if tools:
+        if self.all_tools:
             # 使用标准的bind_tools方法将工具绑定到模型
-            self.chat_model = self.chat_model.bind_tools(tools)
+            self.chat_model = self.chat_model.bind_tools(self.all_tools)
             # 更新基础链以包含绑定工具的模型
             self.chain = self.prompt_template | self.chat_model
-    def set_history_backend(self, history_backend: BaseChatHistory):
+            
+    def set_history_backend(self, history_backend: BaseChatMessageHistory):
         """
         设置历史记录后端
         
@@ -82,7 +78,7 @@ class BaseAgent(ABC):
         """
         self.history_backend = history_backend
 
-    def get_session_history(self, session_id: str) -> BaseChatHistory:
+    def get_session_history(self, session_id: str) -> BaseChatMessageHistory:
         """
         获取会话历史记录
         
@@ -94,11 +90,11 @@ class BaseAgent(ABC):
         """
         if session_id not in self.history_map:
             # 如果没有指定后端，则使用传入的后端或创建内存后端
-            if self.history_backend:
+            if self.history_backend is not None:
                 self.history_map[session_id] = self.history_backend
             else:
-                from chat_memory.chat_history import InMemoryChatHistory
-                self.history_map[session_id] = InMemoryChatHistory()
+                # 使用InMemoryChatMessageHistory作为默认处理
+                self.history_map[session_id] = InMemoryChatMessageHistory()
         
         return self.history_map[session_id]
 
@@ -109,9 +105,10 @@ class BaseAgent(ABC):
         Args:
             tool: 要添加的工具
         """
-        self.all_tools.add_tool(tool)
-        # 重新绑定所有工具到模型
-        self._bind_tools_to_model()
+        if self.all_tools is not None:
+            self.all_tools.append(tool)
+            # 重新绑定所有工具到模型
+            self._bind_tools_to_model()
 
     def add_tools(self, tools: List[BaseTool]):
         """
@@ -120,9 +117,10 @@ class BaseAgent(ABC):
         Args:
             tools: 要添加的工具列表
         """
-        self.all_tools.add_tools(tools)
-        # 重新绑定所有工具到模型
-        self._bind_tools_to_model()
+        if self.all_tools is not None:
+            self.all_tools.extend(tools)
+            # 重新绑定所有工具到模型
+            self._bind_tools_to_model()
 
     @abstractmethod
     def _build_agent(self) -> AgentExecutor:

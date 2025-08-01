@@ -14,7 +14,6 @@ if project_root not in sys.path:
 from .base_agent import BaseAgent
 from .agent_factory import create_agent_by_type, create_writing_agent, create_general_agent, create_custom_agent
 from chat_memory.chat_history import BaseChatHistory, InMemoryChatHistory, RedisChatHistory
-from tools.tool_config import ToolConfig
 
 __all__ = [
     "BaseAgent",
@@ -25,5 +24,4 @@ __all__ = [
     "BaseChatHistory",
     "InMemoryChatHistory",
     "RedisChatHistory",
-    "ToolConfig"
 ]
