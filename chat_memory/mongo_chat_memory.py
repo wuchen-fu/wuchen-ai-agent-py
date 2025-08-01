@@ -34,7 +34,7 @@ class EnhancedMongoDBChatMessageHistory(MongoDBChatMessageHistory):
     ):
         """
         初始化增强版MongoDB聊天历史记录
-        
+
         Args:
             connection_string: MongoDB连接字符串
             session_id: 会话ID
@@ -61,7 +61,7 @@ class EnhancedMongoDBChatMessageHistory(MongoDBChatMessageHistory):
             index_kwargs=index_kwargs,
             client=client,
         )
-        
+
         # 添加用户ID属性
         self.user_id = user_id
         self.user_id_key = "UserId"
@@ -71,7 +71,7 @@ class EnhancedMongoDBChatMessageHistory(MongoDBChatMessageHistory):
         try:
             # 获取当前时间戳
             timestamp = datetime.now()
-            
+
             self.collection.insert_one(
                 {
                     self.session_id_key: self.session_id,
@@ -83,7 +83,7 @@ class EnhancedMongoDBChatMessageHistory(MongoDBChatMessageHistory):
             )
         except errors.WriteError as err:
             logger.error(err)
-            
+
     def clear(self) -> None:
         """从MongoDB清除会话记忆"""
         try:
@@ -94,29 +94,64 @@ class EnhancedMongoDBChatMessageHistory(MongoDBChatMessageHistory):
         except errors.WriteError as err:
             logger.error(err)
 
-class mongo_chat_memory:
+
+class MongoChatMemory(EnhancedMongoDBChatMessageHistory):
     """
-    MongoDB聊天记忆类，用于存储和检索聊天记录
+    MongoDB聊天记忆类，继承自EnhancedMongoDBChatMessageHistory
+    可以直接作为BaseAgent的chat_memory参数使用
+    从环境变量或配置文件中自动读取MongoDB配置
     """
-    def __init__(self):
-        # MongoDB连接配置
+
+    def __init__(self, session_id: str = "default_session", user_id: str = "default_user"):
+        """
+        初始化MongoDB聊天记忆，配置从环境变量自动读取
+
+        Args:
+            session_id: 会话ID
+            user_id: 用户ID
+        """
+        connection_string = self._get_connection_string()
+        database_name = os.getenv('DB_MONGO_DATABASE', 'chat_history')
+        collection_name = os.getenv('DB_MONGO_COLLECTION', 'message_store')
+
+        # 调用父类初始化
+        super().__init__(
+            connection_string=connection_string,
+            session_id=session_id,
+            user_id=user_id,
+            database_name=database_name,
+            collection_name=collection_name
+        )
+
+    def _get_connection_string(self) -> str:
+        """
+        从环境变量获取MongoDB连接字符串
+
+        Returns:
+            MongoDB连接字符串
+        """
+        # 检查是否配置了MongoDB Atlas集群
         if os.getenv('DB_MONGO_URL') and 'cluster' in os.getenv('DB_MONGO_URL', ''):
             # MongoDB Atlas集群（使用SRV记录）
-            self.connection_string = 'mongodb+srv://{}:{}@{}/{}?authSource=admin'.format(
-                os.getenv('DB_MONGO_USER'),
-                os.getenv('DB_MONGO_PASSWORD'),
-                os.getenv('DB_MONGO_URL'),
-                os.getenv('DB_MONGO_DATABASE')
+            return 'mongodb+srv://{}:{}@{}/{}?authSource=admin'.format(
+                os.getenv('DB_MONGO_USER', ''),
+                os.getenv('DB_MONGO_PASSWORD', ''),
+                os.getenv('DB_MONGO_URL', ''),
+                os.getenv('DB_MONGO_DATABASE', 'chat_history')
             )
         else:
             # 本地或普通MongoDB实例
-            self.connection_string = 'mongodb://{}:{}@{}:{}/{}?authSource=admin'.format(
-                os.getenv('DB_MONGO_USER'),
-                os.getenv('DB_MONGO_PASSWORD'),
-                os.getenv('DB_MONGO_URL'),
-                os.getenv('DB_MONGO_PORT'),
-                os.getenv('DB_MONGO_DATABASE')
+            return 'mongodb://{}:{}@{}:{}/{}?authSource=admin'.format(
+                os.getenv('DB_MONGO_USER', ''),
+                os.getenv('DB_MONGO_PASSWORD', ''),
+                os.getenv('DB_MONGO_URL', 'localhost'),
+                os.getenv('DB_MONGO_PORT', '27017'),
+                os.getenv('DB_MONGO_DATABASE', 'chat_history')
             )
-
-        self.db_name = os.getenv('DB_MONGO_DATABASE', 'chat_history')
-        self.collection_name = os.getenv('DB_MONGO_COLLECTION', 'message_store')
+    
+    def close(self) -> None:
+        """
+        关闭MongoDB连接
+        """
+        if self.client:
+            self.client.close()
