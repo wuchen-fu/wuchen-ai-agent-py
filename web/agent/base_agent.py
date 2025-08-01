@@ -1,228 +1,188 @@
-import os
-from typing import List, Optional, Dict, Any
-from dotenv import load_dotenv, find_dotenv
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.output_parsers import StrOutputParser
-from tools.rag_tool import get_vector_store
+import logging
+from abc import ABC, abstractmethod
+from typing import Dict, List, Optional
 
-# 加载环境变量
-dotenv_path = find_dotenv(filename='.env.dev', usecwd=True)
-load_dotenv(dotenv_path=dotenv_path)
+from langchain.agents import AgentExecutor
+from langchain.memory import ConversationBufferMemory
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.messages import BaseMessage
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import Runnable
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.tools import BaseTool
+
+from chat_memory.chat_history import BaseChatHistory
+from tools.tool_config import ToolConfig
+
+logger = logging.getLogger(__name__)
 
 
-class BaseAgent:
+class BaseAgent(ABC):
     """
-    通用Agent基类，支持自定义system角色定义和可选的RAG功能
+    智能体基类，只作为初始智能体构造对话
+    知识库是否使用和对话是否记录由继承的实体类自行实现
     """
     
-    def __init__(self, 
-                 chat_model: ChatOpenAI,
-                 system_prompt: str = "You are a helpful AI assistant.",
-                 use_rag: bool = False,
-                 rag_k: int = 5):
+    def __init__(self, chat_model,
+                 prompt_template: ChatPromptTemplate,
+                 chat_memory : BaseChatMessageHistory,
+                 rag_chain: Optional[Runnable] = None):
         """
-        初始化Agent
+        初始化基础智能体
         
         Args:
-            chat_model: 已配置的ChatOpenAI实例（必填）
-            system_prompt: 系统角色定义和提示词
-            use_rag: 是否使用RAG功能
-            rag_k: RAG检索文档数量
+            chat_model: 聊天模型实例
+            prompt_template: 提示词模板
+            rag_chain: RAG链（可选）
         """
-        if not isinstance(chat_model, ChatOpenAI):
-            raise ValueError("chat_model必须是ChatOpenAI实例")
-            
         self.chat_model = chat_model
-        self.system_prompt = system_prompt
-        self.use_rag = use_rag
-        self.rag_k = rag_k
+        self.prompt_template = prompt_template
+        self.rag_chain = rag_chain
+        self.all_tools = ToolConfig()
         
-        # 如果使用RAG，初始化向量存储
-        if self.use_rag:
-            vector_store = get_vector_store()
-            self.retriever = vector_store.as_retriever(search_kwargs={"k": rag_k})
+        # 创建基础链
+        self.chain = prompt_template | chat_model
         
-        # 初始化聊天历史存储
-        self.chat_history = {}
-    
-    def _get_session_history(self, session_id: str) -> List:
-        """
-        获取会话历史
         
-        Args:
-            session_id: 会话ID
-            
-        Returns:
-            会话历史消息列表
-        """
-        if session_id not in self.chat_history:
-            self.chat_history[session_id] = []
-        return self.chat_history[session_id]
-    
-    def _format_docs(self, docs) -> str:
-        """
-        格式化检索到的文档
+        # 在初始化时将工具绑定到模型
+        self._bind_tools_to_model()
         
-        Args:
-            docs: 检索到的文档列表
-            
-        Returns:
-            格式化后的文档字符串
-        """
-        return "\n\n".join(doc.page_content for doc in docs)
-    
-    def invoke(self, 
-               query: str, 
-               session_id: str = "default",
-               **kwargs) -> str:
-        """
-        处理用户查询
+        self.memory = ConversationBufferMemory(
+            memory_key="chat_history",
+            return_messages=True
+        )
+        self.history_backend: Optional[BaseChatHistory] = None
+        self.history_map: Dict[str, BaseChatHistory] = {}
         
-        Args:
-            query: 用户查询
-            session_id: 会话ID
-            **kwargs: 其他参数
-            
-        Returns:
-            模型回答
-        """
-        # 获取会话历史
-        history = self._get_session_history(session_id)
-        
-        # 如果使用RAG，先检索相关文档
-        context = ""
-        if self.use_rag:
-            docs = self.retriever.invoke(query)
-            context = self._format_docs(docs)
-        
-        # 构建提示词
-        messages = [SystemMessage(content=self.system_prompt)]
-        
-        # 添加历史消息
-        messages.extend(history[-10:])  # 保留最近10条消息
-        
-        # 添加上下文（如果使用RAG）
-        if context:
-            messages.append(SystemMessage(content=f"参考以下上下文信息:\n{context}"))
-        
-        # 添加当前查询
-        messages.append(HumanMessage(content=query))
-        
-        # 调用模型
-        response = self.chat_model.invoke(messages)
-        
-        # 更新会话历史
-        history.append(HumanMessage(content=query))
-        history.append(AIMessage(content=response.content))
-        
-        return response.content
-    
-    def stream(self, 
-               query: str, 
-               session_id: str = "default",
-               **kwargs):
-        """
-        流式处理用户查询
-        
-        Args:
-            query: 用户查询
-            session_id: 会话ID
-            **kwargs: 其他参数
-            
-        Yields:
-            模型回答的内容块
-        """
-        # 获取会话历史
-        history = self._get_session_history(session_id)
-        
-        # 如果使用RAG，先检索相关文档
-        context = ""
-        if self.use_rag:
-            docs = self.retriever.invoke(query)
-            context = self._format_docs(docs)
-        
-        # 构建提示词
-        messages = [SystemMessage(content=self.system_prompt)]
-        
-        # 添加历史消息
-        messages.extend(history[-10:])  # 保留最近10条消息
-        
-        # 添加上下文（如果使用RAG）
-        if context:
-            messages.append(SystemMessage(content=f"参考以下上下文信息:\n{context}"))
-        
-        # 添加当前查询
-        messages.append(HumanMessage(content=query))
-        
-        # 流式调用模型
-        response = self.chat_model.stream(messages)
-        
-        # 收集完整响应
-        full_response = ""
-        for chunk in response:
-            full_response += chunk.content
-            yield chunk.content
-        
-        # 更新会话历史
-        history.append(HumanMessage(content=query))
-        history.append(AIMessage(content=full_response))
+        # 创建带历史记录的链
+        self.history_chain = RunnableWithMessageHistory(
+            self.chain,
+            self.get_session_history,
+            input_messages_key="input",
+            history_messages_key="chat_history",
+            output_messages_key="answer"
+        )
 
+    def _bind_tools_to_model(self):
+        """
+        将工具绑定到模型
+        """
+        tools = self.all_tools.get_tools()
+        if tools:
+            # 使用标准的bind_tools方法将工具绑定到模型
+            self.chat_model = self.chat_model.bind_tools(tools)
+            # 更新基础链以包含绑定工具的模型
+            self.chain = self.prompt_template | self.chat_model
+    def set_history_backend(self, history_backend: BaseChatHistory):
+        """
+        设置历史记录后端
+        
+        Args:
+            history_backend: 历史记录后端实例
+        """
+        self.history_backend = history_backend
 
-class AgentFactory:
-    """
-    Agent工厂类，用于创建不同类型的agents
-    """
-    
-    @staticmethod
-    def create_writing_agent(chat_model: ChatOpenAI) -> BaseAgent:
+    def get_session_history(self, session_id: str) -> BaseChatHistory:
         """
-        创建写作助手Agent
+        获取会话历史记录
         
         Args:
-            chat_model: 已配置的ChatOpenAI实例
-        """
-        system_prompt = """
-        你是一位专业的小说作者，有丰富的小说经验和指导新人写小说经验。
-        引导用户描述内容、设定以及想法，给出相对应的指导。
-        核心能力：
-        1. 教学指导：将复杂技巧拆解为三步实操法
-        2. 文本分析：诊断+带注释修改示范
-        3. 创作示范：生成符合网文平台特性的内容
-        """
-        return BaseAgent(chat_model=chat_model,
-                        system_prompt=system_prompt, 
-                        use_rag=True)
-    
-    @staticmethod
-    def create_general_agent(chat_model: ChatOpenAI) -> BaseAgent:
-        """
-        创建通用助手Agent
-        
-        Args:
-            chat_model: 已配置的ChatOpenAI实例
-        """
-        system_prompt = """
-        你是一个通用的AI助手，能够回答各种问题。
-        请以友好、专业的态度帮助用户解决问题。
-        """
-        return BaseAgent(chat_model=chat_model,
-                        system_prompt=system_prompt, 
-                        use_rag=False)
-    
-    @staticmethod
-    def create_custom_agent(chat_model: ChatOpenAI,
-                          system_prompt: str, 
-                          use_rag: bool = False) -> BaseAgent:
-        """
-        创建自定义Agent
-        
-        Args:
-            system_prompt: 系统角色定义
-            use_rag: 是否使用RAG功能
+            session_id: 会话ID
             
         Returns:
-            自定义Agent实例
+            会话历史记录对象
         """
-        return BaseAgent(system_prompt=system_prompt, use_rag=use_rag)
+        if session_id not in self.history_map:
+            # 如果没有指定后端，则使用传入的后端或创建内存后端
+            if self.history_backend:
+                self.history_map[session_id] = self.history_backend
+            else:
+                from chat_memory.chat_history import InMemoryChatHistory
+                self.history_map[session_id] = InMemoryChatHistory()
+        
+        return self.history_map[session_id]
+
+    def add_tool(self, tool: BaseTool):
+        """
+        添加工具到智能体
+        
+        Args:
+            tool: 要添加的工具
+        """
+        self.all_tools.add_tool(tool)
+        # 重新绑定所有工具到模型
+        self._bind_tools_to_model()
+
+    def add_tools(self, tools: List[BaseTool]):
+        """
+        批量添加工具到智能体
+        
+        Args:
+            tools: 要添加的工具列表
+        """
+        self.all_tools.add_tools(tools)
+        # 重新绑定所有工具到模型
+        self._bind_tools_to_model()
+
+    @abstractmethod
+    def _build_agent(self) -> AgentExecutor:
+        """
+        构建智能体，由子类实现
+        
+        Returns:
+            AgentExecutor: 构建的智能体执行器
+        """
+        pass
+
+    @abstractmethod
+    def chat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:
+        """
+        与智能体进行对话，由子类实现
+        
+        Args:
+            message: 用户消息
+            chat_id: 聊天ID
+            user_id: 用户ID（可选）
+            
+        Returns:
+            智能体的回复
+        """
+        pass
+
+    @abstractmethod
+    async def achat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:
+        """
+        异步与智能体进行对话，由子类实现
+        
+        Args:
+            message: 用户消息
+            chat_id: 聊天ID
+            user_id: 用户ID（可选）
+            
+        Returns:
+            智能体的回复
+        """
+        pass
+
+    def get_history(self, chat_id: str) -> List[BaseMessage]:
+        """
+        获取指定会话的历史记录，由子类实现
+        
+        Args:
+            chat_id: 聊天ID
+            
+        Returns:
+            历史消息列表
+        """
+        # 默认实现返回空列表，子类应重写此方法
+        return []
+
+    def clear_history(self, chat_id: str):
+        """
+        清除指定会话的历史记录，由子类实现
+        
+        Args:
+            chat_id: 聊天ID
+        """
+        # 默认实现不执行任何操作，子类应重写此方法
+        pass
