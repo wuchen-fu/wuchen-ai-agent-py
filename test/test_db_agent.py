@@ -20,6 +20,7 @@ from web.agent.db_agent import DBAgent
 dotenv_path = find_dotenv(filename='../.env.dev', usecwd=True)
 load_dotenv(dotenv_path=dotenv_path)
 
+chid = 'asdasdajsdsa222'
 
 def test_db_agent_sync():
     """测试同步数据库代理"""
@@ -28,23 +29,17 @@ def test_db_agent_sync():
     try:
         # 创建数据库代理实例
         db_agent = DBAgent()
+        resp = db_agent.chat("数据库中有哪些表", chid, "test_user")
+        print(f"回复: {resp}")
         
-        # 测试查询
-        test_queries = [
-            "列出数据库中的所有表",
-            "查询ai_chat_message表的前5条记录",
-        ]
-        
-        for i, query in enumerate(test_queries, 1):
-            print(f"\n--- 测试查询 {i}: {query} ---")
-            try:
-                response = db_agent.chat(query, f"test_session_{i}")
-                print(f"回复: {response}")
-            except Exception as e:
-                print(f"查询出错: {e}")
+        # 测试第二条消息，验证历史记录功能
+        # resp2 = db_agent.chat("我刚才问了什么", chid, "test_user")
+        # print(f"回复: {resp2}")
                 
     except Exception as e:
         print(f"创建数据库代理时出错: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 async def test_db_agent_async():
@@ -63,13 +58,17 @@ async def test_db_agent_async():
         for i, query in enumerate(test_queries, 1):
             print(f"\n--- 异步测试查询 {i}: {query} ---")
             try:
-                response = await db_agent.achat(query, f"async_test_session_{i}")
+                response = await db_agent.achat(query, f"async_test_session_{i}", "test_user")
                 print(f"回复: {response}")
             except Exception as e:
                 print(f"查询出错: {e}")
+                import traceback
+                traceback.print_exc()
                 
     except Exception as e:
         print(f"创建数据库代理时出错: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def main():
@@ -79,8 +78,8 @@ def main():
     # 测试同步功能
     test_db_agent_sync()
     
-    # 测试异步功能
-    asyncio.run(test_db_agent_async())
+    # # 测试异步功能
+    # asyncio.run(test_db_agent_async())
     
     print("\n测试完成。")
 
