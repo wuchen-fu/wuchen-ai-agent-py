@@ -10,7 +10,7 @@ from dotenv import find_dotenv, load_dotenv
 
 # 添加项目根目录到Python路径
 import sys
-project_root = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
@@ -28,8 +28,12 @@ def test_db_agent_sync():
     
     try:
         # 创建数据库代理实例
+        print("创建数据库代理实例...")
         db_agent = DBAgent()
-        resp = db_agent.chat("数据库中有哪些表", chid, "test_user")
+        print("数据库代理实例创建成功")
+        
+        print("发送查询: 当前使用的是什么数据库")
+        resp = db_agent.chat("当前使用的是什么数据库", chid, "test_user")
         print(f"回复: {resp}")
         
         # 测试第二条消息，验证历史记录功能
@@ -37,9 +41,10 @@ def test_db_agent_sync():
         # print(f"回复: {resp2}")
                 
     except Exception as e:
-        print(f"创建数据库代理时出错: {e}")
+        print(f"测试出错: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
+        raise
 
 
 async def test_db_agent_async():

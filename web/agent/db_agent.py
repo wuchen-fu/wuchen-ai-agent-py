@@ -1,17 +1,16 @@
-import os
 import logging
+import os
 from typing import List, Optional
 
-from langchain_community.utilities import SQLDatabase
-from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from dotenv import find_dotenv, load_dotenv
-from langchain_openai.chat_models import ChatOpenAI
+from langchain_community.agent_toolkits import SQLDatabaseToolkit
+from langchain_community.utilities import SQLDatabase
 from langchain_core.tools import BaseTool
-from langchain_core.messages import HumanMessage
-from langgraph.prebuilt import create_react_agent
+from langchain_openai.chat_models import ChatOpenAI
 from chat_memory.mongo_chat_memory import MongoChatMemory
 from tools.custom_toolkit_manage import CustomToolkitManage
-from .base_agent import BaseAgent
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -21,27 +20,29 @@ logger = logging.getLogger(__name__)
 dotenv_path = find_dotenv(filename='.env.dev', usecwd=True)
 load_dotenv(dotenv_path=dotenv_path)
 
+
 # 数据库连接URL构建函数
 def build_mysql_url() -> str:
     """
     构建MySQL数据库连接URL
-    
+
     Returns:
         str: MySQL连接URL
     """
     return 'mysql+pymysql://{}:{}@{}:{}/{}?charset=utf8mb4'.format(
-        os.getenv('DB_MYSQL_USER', 'root'),
-        os.getenv('DB_MYSQL_PASSWORD', ''),
-        os.getenv('DB_MYSQL_URL', 'localhost'),
-        os.getenv('DB_MYSQL_PORT', '3306'),
-        os.getenv('DB_MYSQL_DATABASE', 'test')
+        os.getenv('DB_MYSQL_USER'),
+        os.getenv('DB_MYSQL_PASSWORD'),
+        os.getenv('DB_MYSQL_URL'),
+        os.getenv('DB_MYSQL_PORT'),
+        os.getenv('DB_MYSQL_DATABASE')
     )
+
 
 # 初始化数据库连接和工具
 def init_db_agent_components():
     """
     初始化数据库代理组件
-    
+
     Returns:
         tuple: (chat_model, tools, system_prompt)
     """
@@ -52,15 +53,15 @@ def init_db_agent_components():
             api_key=os.getenv('DASH_SCOPE_API_KEY'),
             base_url=os.getenv('DASH_SCOPE_URL')
         )
-        
+
         # 初始化数据库连接
         mysql_url = build_mysql_url()
         db_mysql = SQLDatabase.from_uri(mysql_url)
-        
+
         # 初始化工具包
         toolkit = SQLDatabaseToolkit(db=db_mysql, llm=chat_model)
         tools = toolkit.get_tools()
-        
+
         # 系统提示词
         system_prompt = """
         你是一个被设计用于与 SQL 数据库交互的智能代理。
@@ -74,23 +75,24 @@ def init_db_agent_components():
         查询开始前，你必须列出数据库中的所有表，以了解可查询的内容，不要跳过这一步。
         然后查询与问题最相关的表的 schema（模式结构）
         """
-        
-        return chat_model, tools, system_prompt
-        
+
+        return chat_model, tools, system_prompt.strip()
+
     except Exception as e:
         logger.error(f"初始化数据库代理组件时出错: {e}")
         raise
 
-class DBAgent(BaseAgent):
+
+class DBAgent:
     """
-    数据库智能体，继承自BaseAgent
+    数据库智能体，不继承自BaseAgent
     用于与SQL数据库交互的智能代理
     """
-    
+
     def __init__(self, chat_model=None, tools: Optional[List[BaseTool]] = None):
         """
         初始化数据库智能体
-        
+
         Args:
             chat_model: 聊天模型实例（可选）
             tools: 工具列表（可选）
@@ -98,41 +100,29 @@ class DBAgent(BaseAgent):
         default_chat_model, default_tools, system_prompt = init_db_agent_components()
         chat_model = chat_model or default_chat_model
         tools = tools or default_tools
-        
-        from langchain_core.prompts import ChatPromptTemplate
-        prompt_template = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("placeholder", "{chat_history}"),
-            ("human", "{input}")
-        ])
-        
+
         # 创建MongoChatMemory实例用于持久化存储对话历史
-        mongo_memory = MongoChatMemory()
+        self.memory = MongoChatMemory()
+
         # 添加数据库工具
         if tools:
             tools.extend(CustomToolkitManage().get_tools())
         else:
             tools = CustomToolkitManage().get_tools()
-        # 调用父类构造函数
-        super().__init__(chat_model, prompt_template, mongo_memory,None,tools)
 
+        # 创建提示词模板
+        prompt_template = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("placeholder", "{chat_history}"),
+            ("human", "{input}"),
+            ("placeholder", "{agent_scratchpad}"),
+        ])
 
-        # 构建代理执行器
-        # self.agent_executor = create_react_agent(
-        #     self.chat_model,
-        #     tools or [],
-        #     prompt=system_prompt
-        # )
+        # 创建传统Langchain代理
+        agent = create_tool_calling_agent(chat_model, tools, prompt_template)
 
-    def _build_agent(self):
-        """
-        构建数据库代理
-
-        Returns:
-            None: DBAgent使用BaseAgent的history_chain处理对话
-        """
-        # DBAgent使用BaseAgent的history_chain处理对话，不需要额外构建代理
-        return None
+        # 创建代理执行器
+        self.agent_executor = AgentExecutor(agent=agent, tools=tools)
 
     def chat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:
         """
@@ -149,26 +139,23 @@ class DBAgent(BaseAgent):
         try:
             # 设置MongoDB会话上下文
             user_id = user_id or "default_user"
-            if hasattr(self.history_backend, 'set_session_context'):
-                self.history_backend.set_session_context(chat_id, user_id)
-            elif hasattr(self.history_backend, 'session_id') and hasattr(self.history_backend, 'user_id'):
-                self.history_backend.session_id = chat_id
-                self.history_backend.user_id = user_id
+            if hasattr(self.memory, 'set_session_context'):
+                self.memory.set_session_context(chat_id, user_id)
+            elif hasattr(self.memory, 'session_id') and hasattr(self.memory, 'user_id'):
+                self.memory.session_id = chat_id
+                self.memory.user_id = user_id
 
-            # 使用代理执行器处理消息
-            response = self.agent_executor.invoke(
-                {"input": message},
-                config={"configurable": {"session_id": chat_id}}
-            )
+            # 使用代理执行器处理消息，不传递历史消息
+            response = self.agent_executor.invoke({"input": message})
 
-            if isinstance(response, dict) and "messages" in response:
-                # 获取最后一条消息作为响应
-                last_message = response["messages"][-1]
-                if hasattr(last_message, 'content'):
-                    return last_message.content
-                else:
-                    return str(last_message)
+            # 手动保存用户消息和AI回复到历史记录
+            from langchain_core.messages import HumanMessage, AIMessage
+            self.memory.add_message(HumanMessage(content=message))
+            if isinstance(response, dict) and "output" in response:
+                self.memory.add_message(AIMessage(content=response["output"]))
+                return response["output"]
             else:
+                self.memory.add_message(AIMessage(content=str(response)))
                 return str(response)
 
         except Exception as e:
@@ -192,28 +179,25 @@ class DBAgent(BaseAgent):
         try:
             # 设置MongoDB会话上下文
             user_id = user_id or "default_user"
-            if hasattr(self.history_backend, 'set_session_context'):
-                self.history_backend.set_session_context(chat_id, user_id)
-            elif hasattr(self.history_backend, 'session_id') and hasattr(self.history_backend, 'user_id'):
-                self.history_backend.session_id = chat_id
-                self.history_backend.user_id = user_id
+            if hasattr(self.memory, 'set_session_context'):
+                self.memory.set_session_context(chat_id, user_id)
+            elif hasattr(self.memory, 'session_id') and hasattr(self.memory, 'user_id'):
+                self.memory.session_id = chat_id
+                self.memory.user_id = user_id
 
-            # 使用代理执行器处理消息
-            response = await self.agent_executor.ainvoke(
-                {"input": message},
-                config={"configurable": {"session_id": chat_id}}
-            )
-            
-            if isinstance(response, dict) and "messages" in response:
-                # 获取最后一条消息作为响应
-                last_message = response["messages"][-1]
-                if hasattr(last_message, 'content'):
-                    return last_message.content
-                else:
-                    return str(last_message)
+            # 使用代理执行器处理消息，不传递历史消息
+            response = await self.agent_executor.ainvoke({"input": message})
+
+            # 手动保存用户消息和AI回复到历史记录
+            from langchain_core.messages import HumanMessage, AIMessage
+            self.memory.add_message(HumanMessage(content=message))
+            if isinstance(response, dict) and "output" in response:
+                self.memory.add_message(AIMessage(content=response["output"]))
+                return response["output"]
             else:
+                self.memory.add_message(AIMessage(content=str(response)))
                 return str(response)
-                
+
         except Exception as e:
             logger.error(f"数据库智能体对话出错: {e}")
             import traceback
