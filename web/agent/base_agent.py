@@ -2,15 +2,16 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional
 
-from langchain.agents import AgentExecutor
+from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import BaseMessage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import Runnable
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.tools import BaseTool
 
+from chat_memory.mongo_chat_memory import MongoChatMemory
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,8 @@ class BaseAgent(ABC):
     """
     
     def __init__(self, chat_model,
-                 prompt_template: ChatPromptTemplate,
+                 # prompt_template: ChatPromptTemplate,
+                 system_prompt: str,
                  chat_memory: Optional[BaseChatMessageHistory] = None,
                  rag_chain: Optional[Runnable] = None,
                  all_tools: Optional[List[BaseTool]] = None):
@@ -36,13 +38,19 @@ class BaseAgent(ABC):
             rag_chain: RAG链（可选）
             all_tools: 工具列表（可选）
         """
+        self.prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{question}"),
+            ("placeholder", "{agent_scratchpad}"),
+        ])
         self.chat_model = chat_model
-        self.prompt_template = prompt_template
+        # self.prompt_template = prompt_template
         self.rag_chain = rag_chain
         self.all_tools = all_tools or []
         
         # 创建基础链
-        self.chain = prompt_template | chat_model
+        self.chain = self.prompt | chat_model
         
         
         # 在初始化时将工具绑定到模型
@@ -50,13 +58,14 @@ class BaseAgent(ABC):
         
         self.history_backend: Optional[BaseChatMessageHistory] = chat_memory
         self.history_map: Dict[str, BaseChatMessageHistory] = {}
-        
+        agent = create_tool_calling_agent(self.chain, all_tools, self.prompt)
+        agent_executor = AgentExecutor(agent=agent, tools=all_tools)
         # 最终执行链
         self.chain_executor = RunnableWithMessageHistory(
-            self.chain,
-            self.get_session_history,
-            input_messages_key="input",
-            history_messages_key="chat_history"
+            agent_executor,
+            self.history_backend.get_session_history,
+            input_messages_key="question",
+            history_messages_key="chat_history",
         )
 
     def _bind_tools_to_model(self):

@@ -12,6 +12,8 @@ from tools.custom_toolkit_manage import CustomToolkitManage
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
 
+from web.agent.base_agent import BaseAgent
+
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -82,10 +84,9 @@ def init_db_agent_components():
         logger.error(f"初始化数据库代理组件时出错: {e}")
         raise
 
-
-class DBAgent:
+class DBAgent(BaseAgent):
     """
-    数据库智能体，不继承自BaseAgent
+    数据库智能体，继承自BaseAgent
     用于与SQL数据库交互的智能代理
     """
 
@@ -109,20 +110,26 @@ class DBAgent:
             tools.extend(CustomToolkitManage().get_tools())
         else:
             tools = CustomToolkitManage().get_tools()
+        # 调用父类构造函数
+        super().__init__(chat_model, system_prompt, self.memory,None,tools)
 
-        # 创建提示词模板
-        prompt_template = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("placeholder", "{chat_history}"),
-            ("human", "{input}"),
-            ("placeholder", "{agent_scratchpad}"),
-        ])
 
-        # 创建传统Langchain代理
-        agent = create_tool_calling_agent(chat_model, tools, prompt_template)
+        # 构建代理执行器
+        # self.agent_executor = create_react_agent(
+        #     self.chat_model,
+        #     tools or [],
+        #     prompt=system_prompt
+        # )
 
-        # 创建代理执行器
-        self.agent_executor = AgentExecutor(agent=agent, tools=tools)
+    def _build_agent(self):
+        """
+        构建数据库代理
+
+        Returns:
+            None: DBAgent使用BaseAgent的history_chain处理对话
+        """
+        # DBAgent使用BaseAgent的history_chain处理对话，不需要额外构建代理
+        return None
 
     def chat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:
         """
@@ -139,23 +146,26 @@ class DBAgent:
         try:
             # 设置MongoDB会话上下文
             user_id = user_id or "default_user"
-            if hasattr(self.memory, 'set_session_context'):
-                self.memory.set_session_context(chat_id, user_id)
-            elif hasattr(self.memory, 'session_id') and hasattr(self.memory, 'user_id'):
-                self.memory.session_id = chat_id
-                self.memory.user_id = user_id
+            if hasattr(self.history_backend, 'set_session_context'):
+                self.history_backend.set_session_context(chat_id, user_id)
+            elif hasattr(self.history_backend, 'session_id') and hasattr(self.history_backend, 'user_id'):
+                self.history_backend.session_id = chat_id
+                self.history_backend.user_id = user_id
 
-            # 使用代理执行器处理消息，不传递历史消息
-            response = self.agent_executor.invoke({"input": message})
+            # 使用代理执行器处理消息
+            response = self.agent_executor.invoke(
+                {"input": message},
+                config={"configurable": {"session_id": chat_id}}
+            )
 
-            # 手动保存用户消息和AI回复到历史记录
-            from langchain_core.messages import HumanMessage, AIMessage
-            self.memory.add_message(HumanMessage(content=message))
-            if isinstance(response, dict) and "output" in response:
-                self.memory.add_message(AIMessage(content=response["output"]))
-                return response["output"]
+            if isinstance(response, dict) and "messages" in response:
+                # 获取最后一条消息作为响应
+                last_message = response["messages"][-1]
+                if hasattr(last_message, 'content'):
+                    return last_message.content
+                else:
+                    return str(last_message)
             else:
-                self.memory.add_message(AIMessage(content=str(response)))
                 return str(response)
 
         except Exception as e:
@@ -179,23 +189,26 @@ class DBAgent:
         try:
             # 设置MongoDB会话上下文
             user_id = user_id or "default_user"
-            if hasattr(self.memory, 'set_session_context'):
-                self.memory.set_session_context(chat_id, user_id)
-            elif hasattr(self.memory, 'session_id') and hasattr(self.memory, 'user_id'):
-                self.memory.session_id = chat_id
-                self.memory.user_id = user_id
+            if hasattr(self.history_backend, 'set_session_context'):
+                self.history_backend.set_session_context(chat_id, user_id)
+            elif hasattr(self.history_backend, 'session_id') and hasattr(self.history_backend, 'user_id'):
+                self.history_backend.session_id = chat_id
+                self.history_backend.user_id = user_id
 
-            # 使用代理执行器处理消息，不传递历史消息
-            response = await self.agent_executor.ainvoke({"input": message})
+            # 使用代理执行器处理消息
+            response = await self.agent_executor.ainvoke(
+                {"input": message},
+                config={"configurable": {"session_id": chat_id}}
+            )
 
-            # 手动保存用户消息和AI回复到历史记录
-            from langchain_core.messages import HumanMessage, AIMessage
-            self.memory.add_message(HumanMessage(content=message))
-            if isinstance(response, dict) and "output" in response:
-                self.memory.add_message(AIMessage(content=response["output"]))
-                return response["output"]
+            if isinstance(response, dict) and "messages" in response:
+                # 获取最后一条消息作为响应
+                last_message = response["messages"][-1]
+                if hasattr(last_message, 'content'):
+                    return last_message.content
+                else:
+                    return str(last_message)
             else:
-                self.memory.add_message(AIMessage(content=str(response)))
                 return str(response)
 
         except Exception as e:

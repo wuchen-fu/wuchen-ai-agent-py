@@ -155,3 +155,17 @@ class MongoChatMemory(EnhancedMongoDBChatMessageHistory):
         """
         if self.client:
             self.client.close()
+
+    @classmethod
+    def get_session_history(cls, session_id: str, user_id: str = "default_user"):
+        """
+        创建MongoChatMemory实例的工厂方法，用于与RunnableWithMessageHistory配合使用
+        
+        Args:
+            session_id: 会话ID
+            user_id: 用户ID
+            
+        Returns:
+            MongoChatMemory实例
+        """
+        return cls(session_id, user_id)
