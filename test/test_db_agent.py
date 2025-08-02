@@ -31,7 +31,7 @@ from web.agent.db_agent import DBAgent
 dotenv_path = find_dotenv(filename='../.env.dev', usecwd=True)
 load_dotenv(dotenv_path=dotenv_path)
 
-chid = 'asdasdajsdsa222'
+chid = 'asdasdajsdsa2223'
 
 def test_db_agent_sync():
     """测试同步数据库代理"""
@@ -44,7 +44,7 @@ def test_db_agent_sync():
         print("数据库代理实例创建成功")
         
         print("发送查询: ")
-        resp = db_agent.chat("今天北京天气怎么样", chid, "test_user")
+        resp = db_agent.chat("查询用户对话消息记录", chid, "test_user")
         print(f"回复: {resp}")
         
         # 测试第二条消息，验证历史记录功能
@@ -147,7 +147,7 @@ def test_db_agent_sync_with_history():
 def main():
     """主测试函数"""
     print("开始测试 DB Agent...")
-    test_db_agent_sync_with_history()
+    # test_db_agent_sync_with_history()
     # 测试同步功能
     test_db_agent_sync()
     

@@ -68,8 +68,8 @@ def init_db_agent_components():
         # 系统提示词
         system_prompt = """
         你是一个被设计用于与 SQL 数据库交互的智能代理。
-        在收到用户的问题后，生成一条语法正确的SQL查询语句来执行,然后查看查询结果并返回答案。
-        除非用户明确指定希望获取的示例数量，否则查询结果最多返回 20 条记录。
+        在收到用户的问题后，生成一条语法正确的SQL查询语句来执行,默认使用时间排序,然后查看查询结果并返回答案。
+        除非用户明确指定希望获取的数量，否则查询结果默认返回 20 条记录。
         可以根据相关字段对结果进行排序，以返回数据库中最匹配的数据。
         永远不要从特定表中查询所有字段（不要使用 SELECT *），只查询与问题相关的字段。
         在执行查询之前，你必须仔细检查查询语句。
@@ -86,7 +86,7 @@ def init_db_agent_components():
         raise
 
 
-class DBAgent:
+class DBAgent(BaseAgent):
     """
     数据库智能体，继承自BaseAgent
     用于与SQL数据库交互的智能代理
@@ -112,26 +112,25 @@ class DBAgent:
             
         # 创建MongoChatMemory实例用于持久化存储对话历史
         mongo_memory = MongoChatMemory()
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{question}"),
-            ("placeholder", "{agent_scratchpad}"),
-        ])
 
-        agent = create_tool_calling_agent(chat_model, tools, prompt)
-        agent_executor = AgentExecutor(agent=agent, tools=tools)
-        self.chain_agent = RunnableWithMessageHistory(
-            agent_executor,
-            MongoChatMemory.get_session_history,
+        # 调用父类构造函数，不传入memory，我们自己处理
+        super().__init__(chat_model, system_prompt, None, None, tools)
+        
+        self.mongo_memory = mongo_memory
+        
+        # 创建适配MongoChatMemory的会话历史获取函数，解决user_id参数问题
+        def get_session_history(session_id: str):
+            # 从mongo_memory中获取当前的user_id
+            user_id = getattr(self.mongo_memory, 'user_id', 'default_user')
+            return MongoChatMemory.get_session_history(session_id, user_id)
+        
+        # 重新创建agent_executor，使用MongoDB支持的会话历史
+        self.agent_executor = RunnableWithMessageHistory(
+            self.agent_executor,
+            get_session_history,
             input_messages_key="question",
             history_messages_key="chat_history",
         )
-
-        # 调用父类构造函数
-        # super().__init__(chat_model, system_prompt, mongo_memory, None, tools)
-        
-        # self.mongo_memory = mongo_memory
 
     def chat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:
         """
@@ -147,15 +146,13 @@ class DBAgent:
         """
         try:
             # 设置MongoDB会话上下文
-            # user_id = user_id or "default_user"
-            # if hasattr(self.mongo_memory, 'set_session_context'):
-            #     self.mongo_memory.set_session_context(chat_id, user_id)
-            # elif hasattr(self.mongo_memory, 'session_id') and hasattr(self.mongo_memory, 'user_id'):
-            #     self.mongo_memory.session_id = chat_id
-            #     self.mongo_memory.user_id = user_id
+            user_id = user_id or "default_user"
+            self.mongo_memory.session_id = chat_id
+            self.mongo_memory.user_id = user_id
+
 
             # 使用代理执行器处理消息
-            response = self.chain_agent.invoke(
+            response = self.agent_executor.invoke(
                 {"question": message},
                 config={"configurable": {"session_id": chat_id}}
             )
