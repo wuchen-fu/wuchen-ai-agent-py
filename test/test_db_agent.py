@@ -43,7 +43,7 @@ def test_db_agent_sync():
         db_agent = DBAgent()
         print("数据库代理实例创建成功")
         
-        print("发送查询: 当前使用的是什么数据库")
+        print("发送查询: ")
         resp = db_agent.chat("今天北京天气怎么样", chid, "test_user")
         print(f"回复: {resp}")
         
@@ -147,7 +147,7 @@ def test_db_agent_sync_with_history():
 def main():
     """主测试函数"""
     print("开始测试 DB Agent...")
-    # test_db_agent_sync_with_history()
+    test_db_agent_sync_with_history()
     # 测试同步功能
     test_db_agent_sync()
     

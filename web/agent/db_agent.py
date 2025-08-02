@@ -3,8 +3,10 @@ import os
 from typing import List, Optional
 
 from dotenv import find_dotenv, load_dotenv
+from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.utilities import SQLDatabase
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableWithMessageHistory
 from langchain_core.tools import BaseTool
 from langchain_openai.chat_models import ChatOpenAI
@@ -84,7 +86,7 @@ def init_db_agent_components():
         raise
 
 
-class DBAgent(BaseAgent):
+class DBAgent:
     """
     数据库智能体，继承自BaseAgent
     用于与SQL数据库交互的智能代理
@@ -110,17 +112,26 @@ class DBAgent(BaseAgent):
             
         # 创建MongoChatMemory实例用于持久化存储对话历史
         mongo_memory = MongoChatMemory()
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{question}"),
+            ("placeholder", "{agent_scratchpad}"),
+        ])
 
-        # 调用父类构造函数
-        super().__init__(chat_model, system_prompt, mongo_memory, None, tools)
-        
-        self.mongo_memory = mongo_memory
-        self.chain_executor = RunnableWithMessageHistory(
-            self.agent_executor,
+        agent = create_tool_calling_agent(chat_model, tools, prompt)
+        agent_executor = AgentExecutor(agent=agent, tools=tools)
+        self.chain_agent = RunnableWithMessageHistory(
+            agent_executor,
             MongoChatMemory.get_session_history,
             input_messages_key="question",
             history_messages_key="chat_history",
         )
+
+        # 调用父类构造函数
+        # super().__init__(chat_model, system_prompt, mongo_memory, None, tools)
+        
+        # self.mongo_memory = mongo_memory
 
     def chat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:
         """
@@ -136,15 +147,15 @@ class DBAgent(BaseAgent):
         """
         try:
             # 设置MongoDB会话上下文
-            user_id = user_id or "default_user"
-            if hasattr(self.mongo_memory, 'set_session_context'):
-                self.mongo_memory.set_session_context(chat_id, user_id)
-            elif hasattr(self.mongo_memory, 'session_id') and hasattr(self.mongo_memory, 'user_id'):
-                self.mongo_memory.session_id = chat_id
-                self.mongo_memory.user_id = user_id
+            # user_id = user_id or "default_user"
+            # if hasattr(self.mongo_memory, 'set_session_context'):
+            #     self.mongo_memory.set_session_context(chat_id, user_id)
+            # elif hasattr(self.mongo_memory, 'session_id') and hasattr(self.mongo_memory, 'user_id'):
+            #     self.mongo_memory.session_id = chat_id
+            #     self.mongo_memory.user_id = user_id
 
             # 使用代理执行器处理消息
-            response = self.chain_executor.invoke(
+            response = self.chain_agent.invoke(
                 {"question": message},
                 config={"configurable": {"session_id": chat_id}}
             )
@@ -182,15 +193,15 @@ class DBAgent(BaseAgent):
         """
         try:
             # 设置MongoDB会话上下文
-            user_id = user_id or "default_user"
-            if hasattr(self.mongo_memory, 'set_session_context'):
-                self.mongo_memory.set_session_context(chat_id, user_id)
-            elif hasattr(self.mongo_memory, 'session_id') and hasattr(self.mongo_memory, 'user_id'):
-                self.mongo_memory.session_id = chat_id
-                self.mongo_memory.user_id = user_id
+            # user_id = user_id or "default_user"
+            # if hasattr(self.mongo_memory, 'set_session_context'):
+            #     self.mongo_memory.set_session_context(chat_id, user_id)
+            # elif hasattr(self.mongo_memory, 'session_id') and hasattr(self.mongo_memory, 'user_id'):
+            #     self.mongo_memory.session_id = chat_id
+            #     self.mongo_memory.user_id = user_id
 
             # 使用代理执行器处理消息
-            response = await self.agent_executor.ainvoke(
+            response = await self.chain_agent.ainvoke(
                 {"question": message},
                 config={"configurable": {"session_id": chat_id}}
             )

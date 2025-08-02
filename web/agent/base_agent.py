@@ -69,8 +69,8 @@ class BaseAgent(ABC):
         agent_executor = AgentExecutor(
             agent=agent,
             tools=self.all_tools,
-            verbose=True,
-            handle_parsing_errors=True
+            # verbose=True,
+            # handle_parsing_errors=True
         )
         
         # 如果没有提供聊天历史后端，则使用内存存储
