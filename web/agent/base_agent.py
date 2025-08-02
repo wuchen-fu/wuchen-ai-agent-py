@@ -11,9 +11,10 @@ from langchain_core.runnables import Runnable
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.tools import BaseTool
 
-from chat_memory.mongo_chat_memory import MongoChatMemory
-
 logger = logging.getLogger(__name__)
+
+# 用于存储会话历史的全局存储
+store: Dict[str, BaseChatMessageHistory] = {}
 
 
 class BaseAgent(ABC):
@@ -22,10 +23,8 @@ class BaseAgent(ABC):
     知识库是否使用和对话是否记录由继承的实体类自行实现
     """
     
-    def __init__(self, chat_model,
-                 # prompt_template: ChatPromptTemplate,
-                 system_prompt: str,
-                 chat_memory: Optional[BaseChatMessageHistory] = None,
+    def __init__(self, chat_model, system_prompt: str,
+                 memory: Optional[BaseChatMessageHistory] = None,
                  rag_chain: Optional[Runnable] = None,
                  all_tools: Optional[List[BaseTool]] = None):
         """
@@ -33,59 +32,74 @@ class BaseAgent(ABC):
         
         Args:
             chat_model: 聊天模型实例
-            prompt_template: 提示词模板
-            chat_memory: 聊天历史存储对象（可选）
+            system_prompt: 系统提示词
+            memory: 聊天历史存储对象（可选）
             rag_chain: RAG链（可选）
             all_tools: 工具列表（可选）
         """
+        self.chat_model = chat_model
+        self.system_prompt = system_prompt
+        self.rag_chain = rag_chain
+        self.all_tools = all_tools or []
+        self.memory = memory
+        
+        # 创建提示词模板
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
+            ("system", self.system_prompt),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}"),
             ("placeholder", "{agent_scratchpad}"),
         ])
-        self.chat_model = chat_model
-        # self.prompt_template = prompt_template
-        self.rag_chain = rag_chain
-        self.all_tools = all_tools or []
         
-        # 创建基础链
-        self.chain = self.prompt | chat_model
-        
-        
-        # 在初始化时将工具绑定到模型
-        self._bind_tools_to_model()
-        
-        self.history_backend: Optional[BaseChatMessageHistory] = chat_memory
-        self.history_map: Dict[str, BaseChatMessageHistory] = {}
-        agent = create_tool_calling_agent(self.chain, all_tools, self.prompt)
-        agent_executor = AgentExecutor(agent=agent, tools=all_tools)
-        # 最终执行链
-        self.chain_executor = RunnableWithMessageHistory(
-            agent_executor,
-            self.history_backend.get_session_history,
-            input_messages_key="question",
-            history_messages_key="chat_history",
-        )
+        # 创建默认的代理执行器
+        self.agent_executor = self._create_default_agent_executor()
 
-    def _bind_tools_to_model(self):
+    def _create_default_agent_executor(self):
         """
-        将工具绑定到模型
+        创建默认的代理执行器
+        
+        Returns:
+            AgentExecutor: 默认的代理执行器
         """
-        if self.all_tools:
-            # 使用标准的bind_tools方法将工具绑定到模型
-            self.chat_model = self.chat_model.bind_tools(self.all_tools)
-            # 更新基础链以包含绑定工具的模型
-            self.chain = self.prompt_template | self.chat_model
             
-    def set_history_backend(self, history_backend: BaseChatMessageHistory):
+        # 创建代理
+        agent = create_tool_calling_agent(self.chat_model, self.all_tools, self.prompt)
+        
+        # 创建代理执行器
+        agent_executor = AgentExecutor(
+            agent=agent,
+            tools=self.all_tools,
+            verbose=True,
+            handle_parsing_errors=True
+        )
+        
+        # 如果没有提供聊天历史后端，则使用内存存储
+        if self.memory is None:
+            def get_session_history(session_id: str) -> BaseChatMessageHistory:
+                if session_id not in store:
+                    store[session_id] = InMemoryChatMessageHistory()
+                return store[session_id]
+            
+            # 创建带历史记录的执行器
+            return RunnableWithMessageHistory(
+                agent_executor,
+                get_session_history,
+                input_messages_key="question",
+                history_messages_key="chat_history"
+            )
+        else:
+            # 如果提供了聊天历史后端，直接返回基础执行器
+            # 子类可以重写此方法以提供更复杂的实现
+            return agent_executor
+
+    def set_memory(self, memory: BaseChatMessageHistory):
         """
         设置历史记录后端
         
         Args:
-            history_backend: 历史记录后端实例
+            memory: 历史记录后端实例
         """
-        self.history_backend = history_backend
+        self.memory = memory
 
     def get_session_history(self, session_id: str) -> BaseChatMessageHistory:
         """
@@ -97,15 +111,12 @@ class BaseAgent(ABC):
         Returns:
             会话历史记录对象
         """
-        if session_id not in self.history_map:
-            # 如果没有指定后端，则使用传入的后端或创建内存后端
-            if self.history_backend is not None:
-                self.history_map[session_id] = self.history_backend
-            else:
-                # 使用InMemoryChatMessageHistory作为默认处理
-                self.history_map[session_id] = InMemoryChatMessageHistory()
-        
-        return self.history_map[session_id]
+        # 如果没有指定后端，则使用传入的后端或创建内存后端
+        if self.memory is not None:
+            return self.memory
+        else:
+            # 使用InMemoryChatMessageHistory作为默认处理
+            return InMemoryChatMessageHistory()
 
     def add_tool(self, tool: BaseTool):
         """
@@ -116,8 +127,6 @@ class BaseAgent(ABC):
         """
         if self.all_tools is not None:
             self.all_tools.append(tool)
-            # 重新绑定所有工具到模型
-            self._bind_tools_to_model()
 
     def add_tools(self, tools: List[BaseTool]):
         """
@@ -128,18 +137,6 @@ class BaseAgent(ABC):
         """
         if self.all_tools is not None:
             self.all_tools.extend(tools)
-            # 重新绑定所有工具到模型
-            self._bind_tools_to_model()
-
-    @abstractmethod
-    def _build_agent(self) -> AgentExecutor:
-        """
-        构建智能体，由子类实现
-        
-        Returns:
-            AgentExecutor: 构建的智能体执行器
-        """
-        pass
 
     @abstractmethod
     def chat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:

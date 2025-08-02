@@ -5,12 +5,11 @@ from typing import List, Optional
 from dotenv import find_dotenv, load_dotenv
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.utilities import SQLDatabase
+from langchain_core.runnables import RunnableWithMessageHistory
 from langchain_core.tools import BaseTool
 from langchain_openai.chat_models import ChatOpenAI
 from chat_memory.mongo_chat_memory import MongoChatMemory
 from tools.custom_toolkit_manage import CustomToolkitManage
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate
 
 from web.agent.base_agent import BaseAgent
 
@@ -84,6 +83,7 @@ def init_db_agent_components():
         logger.error(f"初始化数据库代理组件时出错: {e}")
         raise
 
+
 class DBAgent(BaseAgent):
     """
     数据库智能体，继承自BaseAgent
@@ -102,34 +102,25 @@ class DBAgent(BaseAgent):
         chat_model = chat_model or default_chat_model
         tools = tools or default_tools
 
-        # 创建MongoChatMemory实例用于持久化存储对话历史
-        self.memory = MongoChatMemory()
-
         # 添加数据库工具
         if tools:
             tools.extend(CustomToolkitManage().get_tools())
         else:
             tools = CustomToolkitManage().get_tools()
+            
+        # 创建MongoChatMemory实例用于持久化存储对话历史
+        mongo_memory = MongoChatMemory()
+
         # 调用父类构造函数
-        super().__init__(chat_model, system_prompt, self.memory,None,tools)
-
-
-        # 构建代理执行器
-        # self.agent_executor = create_react_agent(
-        #     self.chat_model,
-        #     tools or [],
-        #     prompt=system_prompt
-        # )
-
-    def _build_agent(self):
-        """
-        构建数据库代理
-
-        Returns:
-            None: DBAgent使用BaseAgent的history_chain处理对话
-        """
-        # DBAgent使用BaseAgent的history_chain处理对话，不需要额外构建代理
-        return None
+        super().__init__(chat_model, system_prompt, mongo_memory, None, tools)
+        
+        self.mongo_memory = mongo_memory
+        self.chain_executor = RunnableWithMessageHistory(
+            self.agent_executor,
+            MongoChatMemory.get_session_history,
+            input_messages_key="question",
+            history_messages_key="chat_history",
+        )
 
     def chat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:
         """
@@ -146,25 +137,28 @@ class DBAgent(BaseAgent):
         try:
             # 设置MongoDB会话上下文
             user_id = user_id or "default_user"
-            if hasattr(self.history_backend, 'set_session_context'):
-                self.history_backend.set_session_context(chat_id, user_id)
-            elif hasattr(self.history_backend, 'session_id') and hasattr(self.history_backend, 'user_id'):
-                self.history_backend.session_id = chat_id
-                self.history_backend.user_id = user_id
+            if hasattr(self.mongo_memory, 'set_session_context'):
+                self.mongo_memory.set_session_context(chat_id, user_id)
+            elif hasattr(self.mongo_memory, 'session_id') and hasattr(self.mongo_memory, 'user_id'):
+                self.mongo_memory.session_id = chat_id
+                self.mongo_memory.user_id = user_id
 
             # 使用代理执行器处理消息
-            response = self.agent_executor.invoke(
-                {"input": message},
+            response = self.chain_executor.invoke(
+                {"question": message},
                 config={"configurable": {"session_id": chat_id}}
             )
 
-            if isinstance(response, dict) and "messages" in response:
-                # 获取最后一条消息作为响应
-                last_message = response["messages"][-1]
-                if hasattr(last_message, 'content'):
-                    return last_message.content
-                else:
-                    return str(last_message)
+            if isinstance(response, dict):
+                if "output" in response:
+                    return response["output"]
+                elif "messages" in response:
+                    # 获取最后一条消息作为响应
+                    last_message = response["messages"][-1]
+                    if hasattr(last_message, 'content'):
+                        return last_message.content
+                    else:
+                        return str(last_message)
             else:
                 return str(response)
 
@@ -189,25 +183,28 @@ class DBAgent(BaseAgent):
         try:
             # 设置MongoDB会话上下文
             user_id = user_id or "default_user"
-            if hasattr(self.history_backend, 'set_session_context'):
-                self.history_backend.set_session_context(chat_id, user_id)
-            elif hasattr(self.history_backend, 'session_id') and hasattr(self.history_backend, 'user_id'):
-                self.history_backend.session_id = chat_id
-                self.history_backend.user_id = user_id
+            if hasattr(self.mongo_memory, 'set_session_context'):
+                self.mongo_memory.set_session_context(chat_id, user_id)
+            elif hasattr(self.mongo_memory, 'session_id') and hasattr(self.mongo_memory, 'user_id'):
+                self.mongo_memory.session_id = chat_id
+                self.mongo_memory.user_id = user_id
 
             # 使用代理执行器处理消息
             response = await self.agent_executor.ainvoke(
-                {"input": message},
+                {"question": message},
                 config={"configurable": {"session_id": chat_id}}
             )
 
-            if isinstance(response, dict) and "messages" in response:
-                # 获取最后一条消息作为响应
-                last_message = response["messages"][-1]
-                if hasattr(last_message, 'content'):
-                    return last_message.content
-                else:
-                    return str(last_message)
+            if isinstance(response, dict):
+                if "output" in response:
+                    return response["output"]
+                elif "messages" in response:
+                    # 获取最后一条消息作为响应
+                    last_message = response["messages"][-1]
+                    if hasattr(last_message, 'content'):
+                        return last_message.content
+                    else:
+                        return str(last_message)
             else:
                 return str(response)
 

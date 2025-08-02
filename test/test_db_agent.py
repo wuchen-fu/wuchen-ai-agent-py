@@ -44,7 +44,7 @@ def test_db_agent_sync():
         print("数据库代理实例创建成功")
         
         print("发送查询: 当前使用的是什么数据库")
-        resp = db_agent.chat("当前使用的是什么数据库", chid, "test_user")
+        resp = db_agent.chat("今天北京天气怎么样", chid, "test_user")
         print(f"回复: {resp}")
         
         # 测试第二条消息，验证历史记录功能
@@ -147,9 +147,9 @@ def test_db_agent_sync_with_history():
 def main():
     """主测试函数"""
     print("开始测试 DB Agent...")
-    test_db_agent_sync_with_history()
+    # test_db_agent_sync_with_history()
     # 测试同步功能
-    # test_db_agent_sync()
+    test_db_agent_sync()
     
     # # 测试异步功能
     # asyncio.run(test_db_agent_async())
