@@ -8,9 +8,12 @@ from langchain.chains.retrieval import create_retrieval_chain
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.messages import BaseMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnableWithMessageHistory as LangChainRunnableWithMessageHistory, Runnable
+from langchain_core.runnables import RunnableWithMessageHistory as LangChainRunnableWithMessageHistory, Runnable, \
+    RunnableWithMessageHistory
 
+from chat_memory.mongo_chat_memory import MongoChatMemory
 from tools.rag_tool import get_vector_store
+from tools.web_search_toolkit import WebSearchToolkit
 from .base_agent import BaseAgent
 
 logging.basicConfig(level=logging.INFO)
@@ -18,18 +21,32 @@ logger = logging.getLogger(__name__)
 
 # 提示词模板
 system_prompt = '''
-你是一位专业的的小说作者，有丰富的小说经验和指导新人写小说经验。
-引导用户描述内容、设定,以及想法,给出相对应的指导
-核心能力：
-教学指导：将复杂技巧拆解为三步实操法
-文本分析：诊断+带注释修改示范
-创作示范：生成符合网文平台特性的内容
-你要用下面检索器检索出来的内容回答问题。
-如果不知道的话,就自行判断是否要通过工具进行网络查询
-'''
+   你是一位专业的的小说作者，有丰富的小说经验和指导新人写小说经验。
+   引导用户描述内容、设定,以及想法,给出相对应的指导
+   核心能力：
+   教学指导：将复杂技巧拆解为三步实操法
+   文本分析：诊断+带注释修改示范
+   创作示范：生成符合网文平台特性的内容
+   你要用下面检索器检索出来的内容回答问题。
+   如果不知道的话,就自行判断是否要通过工具进行网络查询
+   工作规则：  
+   1. 基于「上下文-问题转化器」输出的独立问题，先查看检索内容（{context}）：  
+      - 若{context}有相关信息，结合信息回答；  
+      - 若{context}无相关信息，进入工具调用判断。  
 
-prompt_template = ChatPromptTemplate.from_messages([
-    ('system', system_prompt),
+   2. 工具调用判断（不限制问题领域）：  
+      - 无论问题属于小说创作、生活服务、信息查询等任何领域，只要存在对应的绑定工具，就调用工具获取信息后回答；  
+      - 若没有对应工具，基于自身知识回答（若自身不知道，明确说明“无法回答该问题”）。 
+   '''
+
+qa_prompt = ChatPromptTemplate.from_messages([
+    ('system', '''
+                   你是「上下文-问题转化器」，负责从历史聊天记录和用户最新提问中，提炼出独立、完整的核心问题。  
+                   工作规则：  
+                   1. 若有历史记录，分析与最新问题的关联，提炼出不依赖上下文也能理解的问题。  
+                   2. 若历史记录与新问题无关（或无历史记录），直接返回新问题作为独立问题。  
+                   3. 仅返回问题，不添加任何额外内容。
+                   '''),
     MessagesPlaceholder(variable_name='chat_history'),
     ('human', '{input}'),
 ])
@@ -51,7 +68,7 @@ class WritingAgent(BaseAgent):
     实现具体的对话逻辑、历史记录管理等
     """
 
-    def __init__(self, chat_model, rag_chain: Optional[Runnable] = None):
+    def __init__(self, chat_model):
         """
         初始化写作智能体
         
@@ -59,42 +76,31 @@ class WritingAgent(BaseAgent):
             chat_model: 聊天模型实例
             rag_chain: RAG链（可选）
         """
-        # 设置全局chat_model引用
-        global chain1, chain2, chain
-        
-        # 初始化RAG链
-        if chain1 is None:
-            chain1 = create_stuff_documents_chain(chat_model, prompt_template)
-            
-        if chain2 is None:
-            chain2 = create_history_aware_retriever(chat_model, get_vector_store().as_retriever(), 
-                                                  ChatPromptTemplate.from_messages([
-                                                      ('system', '''
-给我一个历史的聊天记录以即用户最新提出的问题。
-在我们的聊天记录中引用我们的上下文内容，得到一个独立的问题。
-当没有聊天记录的时候，不需要回答这个问题。
-直接返回问题就可以了。
-                                                      '''),
-                                                      MessagesPlaceholder(variable_name='chat_history'),
-                                                      ('human', '{input}'),
-                                                  ]))
-            
-        if chain is None:
-            chain = create_retrieval_chain(chain2, chain1)
-        
-        # 调用父类构造函数
-        super().__init__(chat_model, prompt_template, rag_chain or chain)
-        
+        prompt_template = ChatPromptTemplate.from_messages([
+            ('system', system_prompt),
+            MessagesPlaceholder(variable_name='chat_history'),
+            ('human', '{input}'),
+        ])
+        bind_chat = chat_model.bind_tools(WebSearchToolkit().get_tools())
+        # 问题重写lian
+        qa_chain = create_history_aware_retriever(bind_chat, get_vector_store().as_retriever(), qa_prompt)
+
+        # 提问链
+        question_chain = create_stuff_documents_chain(bind_chat, prompt_template)
+
+        rag_chain = create_retrieval_chain(qa_chain, question_chain)
+
         # 覆盖BaseAgent的history_chain以使用LangChain的实现
-        self.history_chain = LangChainRunnableWithMessageHistory(
-            self.rag_chain,
-            self.get_session_history,
+        self.history_chain = RunnableWithMessageHistory(
+            rag_chain,
+            MongoChatMemory.get_session_history,
             input_messages_key="input",
             history_messages_key="chat_history",
             output_messages_key="answer"
         )
         
-        self.history_map: Dict[str, ChatMessageHistory] = {}
+        # 调用父类构造函数
+        super().__init__(chat_model, system_prompt, None,None)
 
     def get_session_history(self, session_id: str) -> ChatMessageHistory:
         """
@@ -106,9 +112,6 @@ class WritingAgent(BaseAgent):
         Returns:
             会话历史记录对象
         """
-        if session_id not in self.history_map:
-            self.history_map[session_id] = ChatMessageHistory()
-        return self.history_map[session_id]
 
     def _build_agent(self) -> AgentExecutor:
         """
@@ -117,12 +120,6 @@ class WritingAgent(BaseAgent):
         Returns:
             AgentExecutor: 构建的智能体执行器
         """
-        # 写作智能体暂时不使用工具
-        return create_tool_calling_agent(
-            self.chat_model, 
-            self.tools, 
-            self.prompt_template
-        )
 
     def chat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:
         """

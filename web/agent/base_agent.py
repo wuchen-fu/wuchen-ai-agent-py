@@ -25,7 +25,7 @@ class BaseAgent(ABC):
     
     def __init__(self, chat_model, system_prompt: str,
                  memory: Optional[BaseChatMessageHistory] = None,
-                 rag_chain: Optional[Runnable] = None,
+                 # rag_chain: Optional[Runnable] = None,
                  all_tools: Optional[List[BaseTool]] = None):
         """
         初始化基础智能体
@@ -39,7 +39,7 @@ class BaseAgent(ABC):
         """
         self.chat_model = chat_model
         self.system_prompt = system_prompt
-        self.rag_chain = rag_chain
+        # self.rag_chain = rag_chain
         self.all_tools = all_tools or []
         self.memory = memory
         
@@ -61,16 +61,21 @@ class BaseAgent(ABC):
         Returns:
             AgentExecutor: 默认的代理执行器
         """
+        # 绑定工具到模型
+        if self.all_tools:
+            bound_model = self.chat_model.bind_tools(self.all_tools)
+        else:
+            bound_model = self.chat_model
             
         # 创建代理
-        agent = create_tool_calling_agent(self.chat_model, self.all_tools, self.prompt)
+        agent = create_tool_calling_agent(bound_model, self.all_tools, self.prompt)
         
         # 创建代理执行器
         agent_executor = AgentExecutor(
             agent=agent,
             tools=self.all_tools,
-            # verbose=True,
-            # handle_parsing_errors=True
+            verbose=True,
+            handle_parsing_errors=True
         )
         
         # 如果没有提供聊天历史后端，则使用内存存储
@@ -127,6 +132,8 @@ class BaseAgent(ABC):
         """
         if self.all_tools is not None:
             self.all_tools.append(tool)
+            # 重新创建代理执行器以包含新工具
+            self.agent_executor = self._create_default_agent_executor()
 
     def add_tools(self, tools: List[BaseTool]):
         """
@@ -137,6 +144,8 @@ class BaseAgent(ABC):
         """
         if self.all_tools is not None:
             self.all_tools.extend(tools)
+            # 重新创建代理执行器以包含新工具
+            self.agent_executor = self._create_default_agent_executor()
 
     @abstractmethod
     def chat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:

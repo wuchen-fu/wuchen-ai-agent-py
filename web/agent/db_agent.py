@@ -114,7 +114,7 @@ class DBAgent(BaseAgent):
         mongo_memory = MongoChatMemory()
 
         # 调用父类构造函数，不传入memory，我们自己处理
-        super().__init__(chat_model, system_prompt, None, None, tools)
+        super().__init__(chat_model, system_prompt,  None, tools)
         
         self.mongo_memory = mongo_memory
         
