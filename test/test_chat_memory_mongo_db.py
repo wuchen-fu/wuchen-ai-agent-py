@@ -277,9 +277,9 @@ def test_llm_with_mongo_history():
     try:
         # 初始化聊天模型
         chat_model = ChatOpenAI(
-            model=os.getenv('DASH_SCOPE_MODEL', 'gpt-3.5-turbo'),
-            api_key=os.getenv('DASH_SCOPE_API_KEY'),
-            base_url=os.getenv('DASH_SCOPE_URL', 'https://api.openai.com/v1')
+            model=os.getenv('QWEN_MODEL', 'gpt-3.5-turbo'),
+            api_key=os.getenv('QWEN_API_KEY'),
+            base_url=os.getenv('QWEN_URL', 'https://api.openai.com/v1')
         )
         
         # 创建提示模板

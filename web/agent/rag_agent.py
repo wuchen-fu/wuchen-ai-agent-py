@@ -41,16 +41,16 @@ class RAGAgent:
 
         # 聊天检索和响应模型
         self.chat_model_qa = ChatOpenAI(
-            model=os.getenv('DASH_SCOPE_MODEL'),
-            api_key=os.getenv('DASH_SCOPE_API_KEY'),
-            base_url=os.getenv('DASH_SCOPE_URL')
+            model=os.getenv('QWEN_MODEL'),
+            api_key=os.getenv('QWEN_API_KEY'),
+            base_url=os.getenv('QWEN_URL')
         )
 
         # 文档相关性评估模型
         self.chat_model_grader = ChatOpenAI(
-            model=os.getenv('DASH_SCOPE_MODEL'),
-            api_key=os.getenv('DASH_SCOPE_API_KEY'),
-            base_url=os.getenv('DASH_SCOPE_URL')
+            model=os.getenv('QWEN_MODEL'),
+            api_key=os.getenv('QWEN_API_KEY'),
+            base_url=os.getenv('QWEN_URL')
         )
 
         # 文档相关性评估提示词

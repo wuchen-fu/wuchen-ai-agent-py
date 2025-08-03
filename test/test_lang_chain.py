@@ -15,9 +15,9 @@ lang_chain_server_name = os.getenv('LANGCHAIN_PROJECT')
 
 
 chatModel = ChatOpenAI(
-    model=os.getenv('DASH_SCOPE_MODEL'),
-    api_key=os.getenv('DASH_SCOPE_API_KEY'),
-    base_url=os.getenv('DASH_SCOPE_URL'))
+    model=os.getenv('QWEN_MODEL'),
+    api_key=os.getenv('QWEN_API_KEY'),
+    base_url=os.getenv('QWEN_URL'))
 # 正常提示词
 # messages = [
 #     SystemMessage(content="你是一个翻译官，能根据用户给的内容翻译成指定的语言"), # 提示 content值的意思是“将英语翻译成意大利语”

@@ -41,19 +41,22 @@ def test_writing_agent_sync():
     try:
         # 初始化聊天模型
         chat_model = ChatOpenAI(
-            model=os.getenv('DASH_SCOPE_MODEL'),
-            api_key=os.getenv('DASH_SCOPE_API_KEY'),
-            base_url=os.getenv('DASH_SCOPE_URL')
+            model=os.getenv('QWEN_MODEL'),
+            api_key=os.getenv('QWEN_API_KEY'),
+            base_url=os.getenv('QWEN_URL')
         )
         
         # 创建写作代理实例
         print("创建写作代理实例...")
-        writing_agent = WritingAgent(chat_model)
+        # 使用新的配置字典方式创建WritingAgent
+        writing_agent = WritingAgent({"chat_model": chat_model})
         print("写作代理实例创建成功")
         
 
-        response = writing_agent.chat('我想写玄幻小说', chid, "test_user")
-        print(f"回复: {response}")
+        response = writing_agent.stream_chat('我想都市小说', chid, "test_user")
+        for chunk in response:
+            print(chunk, end="")
+        # print(f"回复: {response}")
 
     except Exception as e:
         print(f"测试出错: {type(e).__name__}: {e}")
@@ -69,13 +72,14 @@ async def test_writing_agent_async():
     try:
         # 初始化聊天模型
         chat_model = ChatOpenAI(
-            model=os.getenv('DASH_SCOPE_MODEL'),
-            api_key=os.getenv('DASH_SCOPE_API_KEY'),
-            base_url=os.getenv('DASH_SCOPE_URL')
+            model=os.getenv('QWEN_MODEL'),
+            api_key=os.getenv('QWEN_API_KEY'),
+            base_url=os.getenv('QWEN_URL')
         )
         
         # 创建写作代理实例
-        writing_agent = WritingAgent(chat_model)
+        # 使用新的配置字典方式创建WritingAgent
+        writing_agent = WritingAgent({"chat_model": chat_model})
         
         # 测试查询
         test_queries = [
@@ -105,13 +109,14 @@ def test_writing_agent_with_history():
     try:
         # 初始化聊天模型
         chat_model = ChatOpenAI(
-            model=os.getenv('DASH_SCOPE_MODEL'),
-            api_key=os.getenv('DASH_SCOPE_API_KEY'),
-            base_url=os.getenv('DASH_SCOPE_URL')
+            model=os.getenv('QWEN_MODEL'),
+            api_key=os.getenv('QWEN_API_KEY'),
+            base_url=os.getenv('QWEN_URL')
         )
         
         # 创建写作代理实例
-        writing_agent = WritingAgent(chat_model)
+        # 使用新的配置字典方式创建WritingAgent
+        writing_agent = WritingAgent({"chat_model": chat_model})
         
         # 第一条消息
         print("--- 第一条消息 ---")
@@ -132,9 +137,9 @@ def test_writing_agent_with_history():
 def test_writing_agent_tool_rag_with_memory():
     # global chain1, chain2, chain
     chat_model = ChatOpenAI(
-        model=os.getenv('DASH_SCOPE_MODEL'),
-        api_key=os.getenv('DASH_SCOPE_API_KEY'),
-        base_url=os.getenv('DASH_SCOPE_URL')
+        model=os.getenv('QWEN_MODEL'),
+        api_key=os.getenv('QWEN_API_KEY'),
+        base_url=os.getenv('QWEN_URL')
     )
     bind_chat = chat_model.bind_tools(WebSearchToolkit().get_tools())
     system_prompt = '''

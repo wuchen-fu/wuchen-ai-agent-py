@@ -31,7 +31,7 @@ from web.agent.db_agent import DBAgent
 dotenv_path = find_dotenv(filename='../.env.dev', usecwd=True)
 load_dotenv(dotenv_path=dotenv_path)
 
-chid = 'asdasdajsdsa2223'
+chid = 'asdasdajsdsa222_aaa'
 
 def test_db_agent_sync():
     """测试同步数据库代理"""
@@ -44,7 +44,7 @@ def test_db_agent_sync():
         print("数据库代理实例创建成功")
         
         print("发送查询: ")
-        resp = db_agent.chat("查询用户对话消息记录", chid, "test_user")
+        resp = db_agent.chat("查询用户对话消息记录,查询最早的3条", chid, "test_user1")
         print(f"回复: {resp}")
         
         # 测试第二条消息，验证历史记录功能
@@ -89,9 +89,9 @@ async def test_db_agent_async():
 
 def test_db_agent_sync_with_history():
     chat_model = ChatOpenAI(
-        model=os.getenv('DASH_SCOPE_MODEL'),
-        api_key=os.getenv('DASH_SCOPE_API_KEY'),
-        base_url=os.getenv('DASH_SCOPE_URL')
+        model=os.getenv('QWEN_MODEL'),
+        api_key=os.getenv('QWEN_API_KEY'),
+        base_url=os.getenv('QWEN_URL')
     )
 
     # 初始化数据库连接

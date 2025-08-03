@@ -72,9 +72,9 @@ def init_db_agent_components():
     try:
         # 初始化聊天模型
         chat_model = ChatOpenAI(
-            model=os.getenv('DASH_SCOPE_MODEL'),
-            api_key=os.getenv('DASH_SCOPE_API_KEY'),
-            base_url=os.getenv('DASH_SCOPE_URL')
+            model=os.getenv('QWEN_MODEL'),
+            api_key=os.getenv('QWEN_API_KEY'),
+            base_url=os.getenv('QWEN_URL')
         )
 
         # 初始化数据库连接

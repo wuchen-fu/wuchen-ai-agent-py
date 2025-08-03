@@ -34,7 +34,7 @@ load_dotenv(dotenv_path=dotenv_path)
 
 def chat_stream(messages):
     return BaseApi.call(
-        api_key=os.getenv('DASH_SCOPE_API_KEY'),
+        api_key=os.getenv('QWEN_API_KEY'),
         model='qwen-plus',
         messages=messages,
         result_from='message',

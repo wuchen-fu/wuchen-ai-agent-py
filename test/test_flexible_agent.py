@@ -22,11 +22,11 @@ def create_chat_model(model_name: str = None):
     Returns:
         ChatOpenAI实例
     """
-    model = model_name or os.getenv('DASH_SCOPE_MODEL')
+    model = model_name or os.getenv('QWEN_MODEL')
     return ChatOpenAI(
         model=model,
-        api_key=os.getenv('DASH_SCOPE_API_KEY'),
-        base_url=os.getenv('DASH_SCOPE_URL')
+        api_key=os.getenv('QWEN_API_KEY'),
+        base_url=os.getenv('QWEN_URL')
     )
 
 def demo_writing_agent():

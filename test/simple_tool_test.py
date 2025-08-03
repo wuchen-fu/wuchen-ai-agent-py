@@ -34,9 +34,9 @@ def add_numbers(a: int, b: int) -> int:
     return a + b
 
 # 获取环境变量
-model = os.getenv('DASH_SCOPE_MODEL')
-api_key = os.getenv('DASH_SCOPE_API_KEY')
-base_url = os.getenv('DASH_SCOPE_URL')
+model = os.getenv('QWEN_MODEL')
+api_key = os.getenv('QWEN_API_KEY')
+base_url = os.getenv('QWEN_URL')
 
 # 检查环境变量
 if not model:

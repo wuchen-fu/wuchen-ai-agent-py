@@ -9,9 +9,9 @@ dotenv_path = find_dotenv(filename='.env.dev', usecwd=True)
 load_dotenv(dotenv_path=dotenv_path)
 
 chatModel = ChatOpenAI(
-    model=os.getenv('DASH_SCOPE_MODEL'),
-    api_key=os.getenv('DASH_SCOPE_API_KEY'),
-    base_url=os.getenv('DASH_SCOPE_URL'))
+    model=os.getenv('QWEN_MODEL'),
+    api_key=os.getenv('QWEN_API_KEY'),
+    base_url=os.getenv('QWEN_URL'))
 
 
 MSQL_UEL = 'mysql+pymysql://{}:{}@{}:{}/{}?charset=utf8mb4'.format(

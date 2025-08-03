@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, AsyncIterator, Iterator
 
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -39,28 +39,6 @@ system_prompt = '''
       - 若没有对应工具，基于自身知识回答（若自身不知道，明确说明“无法回答该问题”）。 
    '''
 
-qa_prompt = ChatPromptTemplate.from_messages([
-    ('system', '''
-                   你是「上下文-问题转化器」，负责从历史聊天记录和用户最新提问中，提炼出独立、完整的核心问题。  
-                   工作规则：  
-                   1. 若有历史记录，分析与最新问题的关联，提炼出不依赖上下文也能理解的问题。  
-                   2. 若历史记录与新问题无关（或无历史记录），直接返回新问题作为独立问题。  
-                   3. 仅返回问题，不添加任何额外内容。
-                   '''),
-    MessagesPlaceholder(variable_name='chat_history'),
-    ('human', '{input}'),
-])
-
-vector_store = get_vector_store()
-
-# 定义全局变量，将在初始化时设置
-chat_model = None
-
-# 提问链路和RAG链将在创建实例时初始化
-chain1 = None
-chain2 = None
-chain = None
-
 
 class WritingAgent(BaseAgent):
     """
@@ -68,60 +46,129 @@ class WritingAgent(BaseAgent):
     实现具体的对话逻辑、历史记录管理等
     """
 
-    def __init__(self, chat_model):
+    AGENT_TYPE = "writing"
+    DEFAULT_SYSTEM_PROMPT = system_prompt
+
+    def __init__(self, config: Optional[Dict] = None):
         """
         初始化写作智能体
         
         Args:
-            chat_model: 聊天模型实例
-            rag_chain: RAG链（可选）
+            config: 配置字典，可包含chat_model、system_prompt等
         """
-        prompt_template = ChatPromptTemplate.from_messages([
-            ('system', system_prompt),
-            MessagesPlaceholder(variable_name='chat_history'),
-            ('human', '{input}'),
-        ])
-        bind_chat = chat_model.bind_tools(WebSearchToolkit().get_tools())
-        # 问题重写lian
-        qa_chain = create_history_aware_retriever(bind_chat, get_vector_store().as_retriever(), qa_prompt)
+        # 处理向后兼容性 - 如果config是chat_model实例而不是字典
+        if config and not isinstance(config, dict):
+            config = {"chat_model": config}
 
-        # 提问链
-        question_chain = create_stuff_documents_chain(bind_chat, prompt_template)
+        super().__init__(config)
 
-        rag_chain = create_retrieval_chain(qa_chain, question_chain)
+        # 从配置中获取system_prompt，如果没有则使用默认值
+        self.system_prompt = self.config.get("system_prompt", self.DEFAULT_SYSTEM_PROMPT)
 
-        # 覆盖BaseAgent的history_chain以使用LangChain的实现
-        self.history_chain = RunnableWithMessageHistory(
-            rag_chain,
-            MongoChatMemory.get_session_history,
-            input_messages_key="input",
-            history_messages_key="chat_history",
-            output_messages_key="answer"
-        )
-        
-        # 调用父类构造函数
-        super().__init__(chat_model, system_prompt, None,None)
+        # 初始化RAG相关组件
+        self._initialize_rag_components()
 
-    def get_session_history(self, session_id: str) -> ChatMessageHistory:
+        # 初始化Agent执行器
+        self._initialize_agent_executor()
+    def get_chat_model(self, provider_name: str = None, model_name: str = None):
         """
-        获取会话历史记录
-        
+        获取指定的聊天模型
+
         Args:
-            session_id: 会话ID
-            
-        Returns:
-            会话历史记录对象
-        """
+            provider_name: 模型提供商名称
+            model_name: 模型名称
 
-    def _build_agent(self) -> AgentExecutor:
-        """
-        构建智能体
-        
         Returns:
-            AgentExecutor: 构建的智能体执行器
+            聊天模型实例
         """
+        # 实现从BaseAgent继承来的模型获取方法
+        return super().get_chat_model(provider_name, model_name)
 
-    def chat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:
+    def _initialize_rag_components(self):
+        """初始化RAG相关组件"""
+        try:
+            # 获取默认聊天模型
+            chat_model = self.get_chat_model()
+            if not chat_model:
+                raise ValueError("无法获取聊天模型")
+
+            # 初始化RAG组件
+            self._initialize_rag_components_with_model(chat_model)
+
+        except Exception as e:
+            logger.error(f"初始化RAG组件失败: {e}")
+            raise
+
+    def _initialize_rag_components_with_model(self, chat_model):
+        """使用指定模型初始化RAG相关组件"""
+        try:
+            # 初始化提示词模板
+            qa_prompt = ChatPromptTemplate.from_messages([
+                ('system', '''
+                               你是「上下文-问题转化器」，负责从历史聊天记录和用户最新提问中，提炼出独立、完整的核心问题。  
+                               工作规则：  
+                               1. 若有历史记录，分析与最新问题的关联，提炼出不依赖上下文也能理解的问题。  
+                               2. 若历史记录与新问题无关（或无历史记录），直接返回新问题作为独立问题。  
+                               3. 仅返回问题，不添加任何额外内容。
+                               '''),
+                MessagesPlaceholder(variable_name='chat_history'),
+                ('human', '{input}'),
+            ])
+
+            prompt_template = ChatPromptTemplate.from_messages([
+                ('system', self.system_prompt),
+                MessagesPlaceholder(variable_name='chat_history'),
+                ('human', '{input}'),
+            ])
+
+            # 绑定工具到模型
+            bind_chat = chat_model.bind_tools(WebSearchToolkit().get_tools())
+
+            # 初始化向量存储
+            vector_store = get_vector_store()
+
+            # 问题重写链
+            qa_chain = create_history_aware_retriever(bind_chat, vector_store.as_retriever(), qa_prompt)
+
+            # 提问链
+            question_chain = create_stuff_documents_chain(bind_chat, prompt_template)
+
+            # RAG链
+            self.rag_chain = create_retrieval_chain(qa_chain, question_chain)
+
+        except Exception as e:
+            logger.error(f"使用指定模型初始化RAG组件失败: {e}")
+            raise
+
+    def _initialize_agent_executor(self):
+        """初始化Agent执行器"""
+        try:
+            # 覆盖BaseAgent的history_chain以使用LangChain的实现
+            self.history_chain = RunnableWithMessageHistory(
+                self.rag_chain,
+                MongoChatMemory.get_session_history,
+                input_messages_key="input",
+                history_messages_key="chat_history",
+                output_messages_key="answer"
+            )
+        except Exception as e:
+            logger.error(f"初始化Agent执行器失败: {e}")
+            raise
+
+    def _reinitialize_with_model(self, chat_model):
+        """使用指定模型重新初始化组件"""
+        try:
+            # 重新初始化RAG组件
+            self._initialize_rag_components_with_model(chat_model)
+
+            # 重新初始化Agent执行器
+            self._initialize_agent_executor()
+        except Exception as e:
+            logger.error(f"重新初始化组件失败: {e}")
+            raise
+
+    def chat(self, message: str, chat_id: str, user_id: Optional[str] = None,
+            provider_name: Optional[str] = None, model_name: Optional[str] = None) -> str:
         """
         与智能体进行对话
         
@@ -129,6 +176,8 @@ class WritingAgent(BaseAgent):
             message: 用户消息
             chat_id: 聊天ID
             user_id: 用户ID（可选）
+            provider_name: 模型提供商名称（可选）
+            model_name: 模型名称（可选）
             
         Returns:
             智能体的回复
@@ -136,22 +185,61 @@ class WritingAgent(BaseAgent):
         try:
             # 准备输入数据
             input_data = {"input": message}
-            
+
             # 使用带历史记录的链进行调用
             config = {"configurable": {"session_id": chat_id}}
             response = self.history_chain.invoke(input_data, config=config)
-            
+
             # 返回响应内容
             if isinstance(response, dict):
                 return response.get("answer", str(response))
             else:
                 return str(response)
-                
+
         except Exception as e:
             logger.error(f"智能体对话出错: {e}")
             return "抱歉，我在处理您的问题时遇到了错误。"
 
-    async def achat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:
+    def stream_chat(self, message: str, chat_id: str, user_id: Optional[str] = None,
+                   provider_name: Optional[str] = None, model_name: Optional[str] = None) -> Iterator[str]:
+        """
+        与智能体进行流式对话
+        
+        Args:
+            message: 用户消息
+            chat_id: 聊天ID
+            user_id: 用户ID（可选）
+            provider_name: 模型提供商名称（可选）
+            model_name: 模型名称（可选）
+            
+        Yields:
+            智能体的回复片段
+        """
+        try:
+            # 准备输入数据
+            input_data = {"input": message}
+            
+            # 使用带历史记录的链进行流式调用
+            config = {"configurable": {"session_id": chat_id}}
+            for chunk in self.history_chain.stream(input_data, config=config):
+                # 处理不同类型的响应
+                if isinstance(chunk, dict):
+                    # 如果是字典，尝试提取answer或content字段
+                    content = chunk.get("answer") or chunk.get("content", "")
+                    if content:
+                        yield content
+                else:
+                    # 如果是字符串或其他类型，直接转换为字符串
+                    content = str(chunk)
+                    if content:
+                        yield content
+                        
+        except Exception as e:
+            logger.error(f"智能体流式对话出错: {e}")
+            yield "抱歉，我在处理您的问题时遇到了错误。"
+
+    async def achat(self, message: str, chat_id: str, user_id: Optional[str] = None,
+                   provider_name: Optional[str] = None, model_name: Optional[str] = None) -> str:
         """
         异步与智能体进行对话
         
@@ -159,6 +247,8 @@ class WritingAgent(BaseAgent):
             message: 用户消息
             chat_id: 聊天ID
             user_id: 用户ID（可选）
+            provider_name: 模型提供商名称（可选）
+            model_name: 模型名称（可选）
             
         Returns:
             智能体的回复
@@ -166,20 +256,58 @@ class WritingAgent(BaseAgent):
         try:
             # 准备输入数据
             input_data = {"input": message}
-            
+
             # 使用带历史记录的链进行调用
             config = {"configurable": {"session_id": chat_id}}
             response = await self.history_chain.ainvoke(input_data, config=config)
-            
+
             # 返回响应内容
             if isinstance(response, dict):
                 return response.get("answer", str(response))
             else:
                 return str(response)
-                
+
         except Exception as e:
             logger.error(f"智能体对话出错: {e}")
             return "抱歉，我在处理您的问题时遇到了错误。"
+
+    async def astream_chat(self, message: str, chat_id: str, user_id: Optional[str] = None, 
+                          provider_name: Optional[str] = None, model_name: Optional[str] = None) -> AsyncIterator[str]:
+        """
+        异步与智能体进行流式对话
+        
+        Args:
+            message: 用户消息
+            chat_id: 聊天ID
+            user_id: 用户ID（可选）
+            provider_name: 模型提供商名称（可选）
+            model_name: 模型名称（可选）
+            
+        Yields:
+            智能体的回复片段
+        """
+        try:
+            # 准备输入数据
+            input_data = {"input": message}
+            
+            # 使用带历史记录的链进行流式调用
+            config = {"configurable": {"session_id": chat_id}}
+            async for chunk in self.history_chain.astream(input_data, config=config):
+                # 处理不同类型的响应
+                if isinstance(chunk, dict):
+                    # 如果是字典，尝试提取answer或content字段
+                    content = chunk.get("answer") or chunk.get("content", "")
+                    if content:
+                        yield content
+                else:
+                    # 如果是字符串或其他类型，直接转换为字符串
+                    content = str(chunk)
+                    if content:
+                        yield content
+                        
+        except Exception as e:
+            logger.error(f"智能体流式对话出错: {e}")
+            yield "抱歉，我在处理您的问题时遇到了错误."
 
     def get_history(self, chat_id: str) -> List[BaseMessage]:
         """
@@ -191,8 +319,12 @@ class WritingAgent(BaseAgent):
         Returns:
             历史消息列表
         """
-        history = self.get_session_history(chat_id)
-        return history.messages
+        try:
+            history = MongoChatMemory.get_session_history(chat_id)
+            return history.messages
+        except Exception as e:
+            logger.error(f"获取历史记录出错: {e}")
+            return []
 
     def clear_history(self, chat_id: str):
         """
@@ -201,7 +333,8 @@ class WritingAgent(BaseAgent):
         Args:
             chat_id: 聊天ID
         """
-        history = self.get_session_history(chat_id)
-        history.clear()
-        if chat_id in self.history_map:
-            del self.history_map[chat_id]
+        try:
+            history = MongoChatMemory.get_session_history(chat_id)
+            history.clear()
+        except Exception as e:
+            logger.error(f"清除历史记录出错: {e}")
