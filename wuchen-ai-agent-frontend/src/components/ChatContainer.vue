@@ -17,7 +17,7 @@
               <i :class="message.sender === 'user' ? 'fas fa-user' : 'fas fa-robot'"></i>
             </div>
             <div class="message-content container">
-              {{ message.content }}<span v-if="message.isStreaming" class="cursor">_</span>
+              <div v-html="formatMessage(message.content)"></div><span v-if="message.isStreaming" class="cursor">_</span>
             </div>
           </div>
         </div>
@@ -59,6 +59,7 @@ import { ref, computed, watch, nextTick, onUnmounted } from 'vue';
 import { Agent, Message } from '../services/agentService';
 import { createSession, sendMessageStream } from '../services/agentService';
 import MessageItem from './MessageItem.vue';
+import { marked } from 'marked';
 
 const props = defineProps<{
   agent: Agent | null
@@ -83,6 +84,24 @@ const welcomeMessage = computed<Message>(() => {
     timestamp: new Date()
   };
 });
+
+// 格式化消息内容（支持Markdown）
+const formatMessage = (content: string) => {
+  if (!content) return '';
+  
+  try {
+    // 使用marked解析Markdown
+    return marked(content, {
+      breaks: true, // 支持换行符
+      gfm: true,    // 支持GitHub风格的Markdown
+      sanitize: false // 允许HTML标签
+    });
+  } catch (error) {
+    console.error('Markdown解析错误:', error);
+    // 如果解析失败，回退到简单的换行符转换
+    return content.replace(/\n/g, '<br>');
+  }
+};
 
 // 生成用户ID
 const generateUserId = () => {
@@ -178,57 +197,44 @@ const sendMessage = async () => {
   };
   messages.value.push(aiMessage);
 
-  // 用 fetch 发送 POST 请求并流式处理响应
-  const url = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:9091/api'}/stream_chat`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: sessionId.value,
-      agent_type: props.agent.id,
-      user_id: userId.value,
-      message: userContent
-    })
-  });
-
-  if (!response.body) {
-    aiMessage.content = '流式响应不支持';
+  // 使用修复后的sendMessageStream函数
+  try {
+    await sendMessageStream(
+      sessionId.value,
+      props.agent.id,
+      userId.value,
+      userContent,
+      (chunk: string) => {
+        // 接收到数据块时的回调
+        console.log('接收到数据块:', chunk);
+        
+        // agentService已经解析过JSON，这里直接使用chunk作为内容
+        aiMessage.content += chunk;
+        messages.value = [...messages.value];
+        nextTick(() => {
+          scrollToBottom();
+        });
+      },
+      (error: any) => {
+        // 错误处理
+        console.error('流式请求错误:', error);
+        aiMessage.content = `错误: ${error.message || '请求失败'}`;
+        aiMessage.isStreaming = false;
+        isLoading.value = false;
+      },
+      () => {
+        // 完成时的回调
+        console.log('流式请求完成');
+        aiMessage.isStreaming = false;
+        isLoading.value = false;
+      }
+    );
+  } catch (error) {
+    console.error('发送消息失败:', error);
+    aiMessage.content = `错误: ${error instanceof Error ? error.message : '请求失败'}`;
     aiMessage.isStreaming = false;
     isLoading.value = false;
-    return;
   }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let done = false;
-  let buffer = '';
-
-  while (!done) {
-    const { value, done: streamDone } = await reader.read();
-    done = streamDone;
-    if (value) {
-      const chunk = decoder.decode(value, { stream: true });
-      buffer += chunk;
-      let lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (line.startsWith('data:')) {
-          const data = line.slice(5).trim();
-          if (data === '[DONE]') {
-            aiMessage.isStreaming = false;
-            isLoading.value = false;
-          } else {
-            aiMessage.content += data;
-            messages.value = [...messages.value];
-            await nextTick();
-            scrollToBottom();
-          }
-        }
-      }
-    }
-  }
-  aiMessage.isStreaming = false;
-  isLoading.value = false;
 };
 </script>
 
@@ -371,7 +377,7 @@ const sendMessage = async () => {
 .message {
   display: flex;
   align-items: flex-start;
-  max-width: 80%;
+  max-width: 90%;
 }
 .message.left {
   flex-direction: row;
@@ -381,8 +387,14 @@ const sendMessage = async () => {
   flex-direction: row-reverse;
   justify-content: flex-end;
 }
+.message-row.left .message {
+  max-width: 95%;
+}
+.message-row.right .message {
+  max-width: 80%;
+}
 .message-content.container {
-  max-width: 70%;
+  max-width: 100%;
   word-break: break-all;
   padding: 12px 16px;
   border-radius: 18px;
@@ -471,5 +483,116 @@ const sendMessage = async () => {
   .chat-input-container {
     padding: 10px;
   }
+}
+
+/* Markdown样式 */
+.message-content.container {
+  line-height: 1.6;
+}
+
+.message-content.container h1,
+.message-content.container h2,
+.message-content.container h3,
+.message-content.container h4,
+.message-content.container h5,
+.message-content.container h6 {
+  margin: 16px 0 8px 0;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.message-content.container h1 {
+  font-size: 1.5em;
+  border-bottom: 2px solid #e1e4e8;
+  padding-bottom: 8px;
+}
+
+.message-content.container h2 {
+  font-size: 1.3em;
+  border-bottom: 1px solid #e1e4e8;
+  padding-bottom: 6px;
+}
+
+.message-content.container h3 {
+  font-size: 1.1em;
+}
+
+.message-content.container p {
+  margin: 8px 0;
+}
+
+.message-content.container ul,
+.message-content.container ol {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.message-content.container li {
+  margin: 4px 0;
+}
+
+.message-content.container blockquote {
+  margin: 8px 0;
+  padding: 8px 16px;
+  border-left: 4px solid #dfe2e5;
+  background-color: #f6f8fa;
+  color: #6a737d;
+}
+
+.message-content.container code {
+  background-color: #f6f8fa;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
+.message-content.container pre {
+  background-color: #f6f8fa;
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.message-content.container pre code {
+  background: none;
+  padding: 0;
+}
+
+.message-content.container table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+}
+
+.message-content.container th,
+.message-content.container td {
+  border: 1px solid #dfe2e5;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.message-content.container th {
+  background-color: #f6f8fa;
+  font-weight: 600;
+}
+
+.message-content.container tr:nth-child(even) {
+  background-color: #f8f9fa;
+}
+
+.message-content.container strong {
+  font-weight: 600;
+}
+
+.message-content.container em {
+  font-style: italic;
+}
+
+.message-content.container hr {
+  border: none;
+  border-top: 1px solid #e1e4e8;
+  margin: 16px 0;
 }
 </style>

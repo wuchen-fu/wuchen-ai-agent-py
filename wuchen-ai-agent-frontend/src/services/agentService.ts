@@ -81,6 +81,8 @@ function processBuffer(buffer: string, onMessage: (data: string) => void, onDone
   }
 }
 
+
+
 // 发送消息（流式方式）
 export const sendMessageStream = async (
   sessionId: string, 
@@ -140,7 +142,7 @@ export const sendMessageStream = async (
       // 累积到缓冲区
       buffer += chunk;
       
-      // 按换行符分割处理
+      // 尝试按换行符分割处理
       const lines = buffer.split('\n');
       
       // 保留最后一个可能不完整的行在缓冲区中
@@ -149,8 +151,17 @@ export const sendMessageStream = async (
       // 处理完整的行
       for (const line of lines) {
         const trimmedLine = line.trim();
-        console.log('处理行:', trimmedLine); // 调试日志
-        processLine(trimmedLine, onMessage, onDone);
+        if (trimmedLine.length > 0) {
+          console.log('处理行:', trimmedLine); // 调试日志
+          processLine(trimmedLine, onMessage, onDone);
+        }
+      }
+      
+      // 如果缓冲区中没有换行符，尝试直接处理
+      if (buffer && !buffer.includes('\n')) {
+        console.log('处理缓冲区（无换行符）:', buffer); // 调试日志
+        processLine(buffer, onMessage, onDone);
+        buffer = ''; // 清空缓冲区
       }
     }
     
@@ -163,22 +174,114 @@ export const sendMessageStream = async (
 
 // 处理单行数据
 function processLine(line: string, onMessage: (data: string) => void, onDone?: () => void) {
-  // 检查是否是SSE格式的data行
-  if (line.startsWith('data:')) {
-    const data = line.slice(5).trim(); // 移除 'data:' 前缀并去除空格
-    console.log('提取的SSE数据:', data); // 调试日志
-    
-    if (data === '[DONE]') {
-      if (onDone) onDone();
-    } else {
-      onMessage(data);
-    }
-  } else if (line === '[DONE]') {
-    // 直接检查是否是结束标记
+  if (line.length === 0) return;
+  
+  console.log('处理行:', line); // 调试日志
+  
+  // 检查是否是结束标记
+  if (line === '[DONE]') {
     if (onDone) onDone();
-  } else if (line.length > 0) {
-    // 处理没有"data:"前缀的纯数据行
+    return;
+  }
+  
+  // 处理SSE格式的数据（data: 前缀）
+  if (line.startsWith('data: ')) {
+    const jsonPart = line.slice(6).trim(); // 移除 "data: " 前缀
+    
+    if (jsonPart.length === 0) {
+      console.log('空的数据行，跳过');
+      return;
+    }
+    
+    try {
+      const jsonData = JSON.parse(jsonPart);
+      console.log('解析的JSON数据:', jsonData); // 调试日志
+      
+      // 检查是否是结束事件
+      if (jsonData.event === 'end') {
+        if (onDone) onDone();
+        return;
+      }
+      
+      // 检查是否是错误事件
+      if (jsonData.event === 'error') {
+        const errorText = jsonData.text || jsonData.data || '未知错误';
+        console.error('服务器返回错误:', errorText);
+        onMessage(`错误: ${errorText}`);
+        return;
+      }
+      
+      // 提取数据内容，优先使用 text 字段
+      if (jsonData.text) {
+        console.log('发送内容到前端:', jsonData.text); // 调试日志
+        onMessage(jsonData.text);
+      } else if (jsonData.data) {
+        // 兼容旧格式
+        console.log('发送内容到前端:', jsonData.data); // 调试日志
+        onMessage(jsonData.data);
+      }
+      
+      // 可以处理元数据
+      if (jsonData.metadata) {
+        console.log('元数据:', jsonData.metadata);
+      }
+      
+      return;
+    } catch (error) {
+      console.log('JSON解析失败，尝试其他格式:', error);
+      // 如果JSON解析失败，且不是空内容，才尝试按纯文本处理
+      if (jsonPart.length > 0) {
+        console.log('处理纯文本数据:', jsonPart); // 调试日志
+        onMessage(jsonPart);
+      }
+      return;
+    }
+  }
+  
+  // 尝试直接解析JSON格式的数据（没有data:前缀的情况）
+  try {
+    const jsonData = JSON.parse(line);
+    console.log('解析的JSON数据:', jsonData); // 调试日志
+    
+    // 检查是否是结束事件
+    if (jsonData.event === 'end') {
+      if (onDone) onDone();
+      return;
+    }
+    
+    // 检查是否是错误事件
+    if (jsonData.event === 'error') {
+      const errorText = jsonData.text || jsonData.data || '未知错误';
+      console.error('服务器返回错误:', errorText);
+      onMessage(`错误: ${errorText}`);
+      return;
+    }
+    
+    // 提取数据内容
+    if (jsonData.text) {
+      console.log('发送内容到前端:', jsonData.text); // 调试日志
+      onMessage(jsonData.text);
+    } else if (jsonData.data) {
+      // 兼容旧格式
+      console.log('发送内容到前端:', jsonData.data); // 调试日志
+      onMessage(jsonData.data);
+    }
+    
+    // 可以处理元数据
+    if (jsonData.metadata) {
+      console.log('元数据:', jsonData.metadata);
+    }
+    
+    return;
+  } catch (error) {
+    console.log('JSON解析失败，尝试其他格式:', error);
+  }
+  
+  // 如果不是任何已知格式，且不是空的data:行，才按纯文本处理
+  if (line !== 'data:') {
     console.log('处理纯文本数据:', line); // 调试日志
     onMessage(line);
+  } else {
+    console.log('跳过空的data:行');
   }
 }
