@@ -86,15 +86,39 @@ class DBAgent(BaseAgent):
         # 系统提示词
         self.system_prompt = """
         你是一个被设计用于与 SQL 数据库交互的智能代理。
-        在收到用户的问题后，生成一条语法正确的SQL查询语句来执行,默认使用时间排序,然后查看查询结果并返回答案。
-        除非用户明确指定希望获取的数量，否则查询结果默认返回 20 条记录。
-        可以根据相关字段对结果进行排序，以返回数据库中最匹配的数据。
-        永远不要从特定表中查询所有字段（不要使用 SELECT *），只查询与问题相关的字段。
-        在执行查询之前，你必须仔细检查查询语句。
-        如果在执行查询时出现错误，必须重写查询并重新尝试。
-        严禁执行任何数据库DML语句（如 INSERT、UPDATE、DELETE、DROP 等）。
-        查询开始前，你必须列出数据库中的所有表，以了解可查询的内容，不要跳过这一步。
-        然后查询与问题最相关的表的 schema（模式结构）
+        
+        ## 核心职责
+        在收到用户的问题后，生成一条语法正确的SQL查询语句来执行，默认使用时间排序，然后查看查询结果并返回答案。
+        
+        ## 查询规范
+        - 除非用户明确指定希望获取的数量，否则查询结果默认返回 20 条记录
+        - 可以根据相关字段对结果进行排序，以返回数据库中最匹配的数据
+        - 永远不要从特定表中查询所有字段（不要使用 SELECT *），只查询与问题相关的字段
+        - 在执行查询之前，你必须仔细检查查询语句
+        - 如果在执行查询时出现错误，必须重写查询并重新尝试
+        - 严禁执行任何数据库DML语句（如 INSERT、UPDATE、DELETE、DROP 等）
+        
+        ## 执行流程
+        1. **数据库探索**：查询开始前，列出数据库中的所有表，以了解可查询的内容
+        2. **表结构分析**：查询与问题最相关的表的 schema（模式结构）
+        3. **SQL生成**：基于分析结果生成合适的SQL查询
+        4. **结果处理**：执行查询并格式化返回结果
+        
+        ## 输出格式要求
+        请按照以下结构组织你的回答：
+        
+        ### 1. 数据库概览
+        - 列出相关表及其用途
+        
+        ### 2. 查询分析
+        - 说明查询思路和选择的表
+        
+        ### 3. 执行结果
+        - 以表格形式展示查询结果
+        - 对结果进行简要分析
+        
+        ### 4. 总结
+        - 提供关键洞察和建议
         """
 
         # 创建MongoChatMemory实例用于持久化存储对话历史
@@ -222,6 +246,135 @@ class DBAgent(BaseAgent):
         else:
             return str(chunk)
 
+    def _split_content_for_streaming(self, content: str) -> Iterator[str]:
+        """
+        将内容分割成适合流式传输的小片段，优化显示效果
+        
+        Args:
+            content: 要分割的内容
+            
+        Yields:
+            str: 分割后的内容片段
+        """
+        if not content or len(content.strip()) == 0:
+            return
+            
+        # 如果内容很短，直接返回
+        if len(content) <= 20:
+            yield content
+            return
+            
+        import re
+        
+        # 首先按段落分割（双换行）
+        paragraphs = re.split(r'\n\s*\n', content)
+        
+        for paragraph in paragraphs:
+            paragraph = paragraph.strip()
+            if not paragraph:
+                continue
+                
+            # 检查是否是标题或列表项
+            if re.match(r'^[#*•\-]\s*', paragraph) or re.match(r'^\d+\.\s*', paragraph):
+                # 标题或列表项，整体输出
+                yield paragraph + '\n'
+                continue
+                
+            # 检查是否是表格或代码块
+            if '|' in paragraph and paragraph.count('|') > 1:
+                # 表格内容，按行分割
+                lines = paragraph.split('\n')
+                for line in lines:
+                    if line.strip():
+                        yield line + '\n'
+                continue
+                
+            # 普通段落，按句子分割
+            sentences = re.split(r'([。！？\n])', paragraph)
+            
+            for i in range(0, len(sentences), 2):
+                sentence = sentences[i]
+                punctuation = sentences[i + 1] if i + 1 < len(sentences) else ''
+                full_sentence = sentence + punctuation
+                
+                if full_sentence.strip():
+                    # 如果句子很长，进一步分割
+                    if len(full_sentence) > 60:
+                        # 按逗号分割长句子
+                        parts = re.split(r'([，,；])', full_sentence)
+                        for j in range(0, len(parts), 2):
+                            part = parts[j]
+                            punct = parts[j + 1] if j + 1 < len(parts) else ''
+                            full_part = part + punct
+                            if full_part.strip():
+                                yield full_part
+                    else:
+                        yield full_sentence
+
+    def _async_split_content_for_streaming(self, content: str) -> AsyncIterator[str]:
+        """
+        异步版本的内容分割方法
+        
+        Args:
+            content: 要分割的内容
+            
+        Yields:
+            str: 分割后的内容片段
+        """
+        for piece in self._split_content_for_streaming(content):
+            yield piece
+
+    def _format_content_for_display(self, content: str) -> str:
+        """
+        格式化内容以提升显示效果
+        
+        Args:
+            content: 原始内容
+            
+        Returns:
+            str: 格式化后的内容
+        """
+        if not content:
+            return content
+            
+        import re
+        
+        # 1. 确保标题格式正确
+        content = re.sub(r'^(\d+\.\s*)(.+)$', r'### \2', content, flags=re.MULTILINE)
+        content = re.sub(r'^(##\s+)(.+)$', r'### \2', content, flags=re.MULTILINE)
+        
+        # 2. 格式化列表项
+        content = re.sub(r'^[-*]\s+', '• ', content, flags=re.MULTILINE)
+        
+        # 3. 确保段落之间有适当的空行
+        content = re.sub(r'\n{3,}', '\n\n', content)
+        
+        # 4. 格式化表格（如果存在）
+        lines = content.split('\n')
+        formatted_lines = []
+        in_table = False
+        
+        for line in lines:
+            if '|' in line and line.count('|') > 1:
+                if not in_table:
+                    in_table = True
+                    formatted_lines.append('')  # 表格前空行
+                formatted_lines.append(line)
+            else:
+                if in_table:
+                    in_table = False
+                    formatted_lines.append('')  # 表格后空行
+                formatted_lines.append(line)
+        
+        content = '\n'.join(formatted_lines)
+        
+        # 5. 确保代码块格式正确
+        content = re.sub(r'```(\w+)?\n', r'```\1\n', content)
+        
+        return content
+
+
+
     def chat(self, message: str, chat_id: str, user_id: Optional[str] = None,
              provider_name: str = None, model_name: str = None) -> str:
         """
@@ -307,7 +460,11 @@ class DBAgent(BaseAgent):
             ):
                 content = self._extract_stream_content(chunk)
                 if content:
-                    yield content
+                    # 格式化内容以提升显示效果
+                    formatted_content = self._format_content_for_display(content)
+                    # 将大块内容分割成更小的片段，提供更好的流式体验
+                    for piece in self._split_content_for_streaming(formatted_content):
+                        yield piece
 
         except Exception as e:
             logger.error(f"数据库智能体流式对话出错: {e}")
@@ -400,7 +557,11 @@ class DBAgent(BaseAgent):
             ):
                 content = self._extract_stream_content(chunk)
                 if content:
-                    yield content
+                    # 格式化内容以提升显示效果
+                    formatted_content = self._format_content_for_display(content)
+                    # 将大块内容分割成更小的片段，提供更好的流式体验
+                    async for piece in self._async_split_content_for_streaming(formatted_content):
+                        yield piece
 
         except Exception as e:
             logger.error(f"数据库智能体异步流式对话出错: {e}")
@@ -424,6 +585,8 @@ class DBAgent(BaseAgent):
         except Exception as e:
             logger.error(f"获取历史记录出错: {e}")
             return []
+
+
 
     def clear_history(self, chat_id: str):
         """

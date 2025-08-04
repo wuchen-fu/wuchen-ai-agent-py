@@ -63,8 +63,10 @@ class ChatResponseUnion(BaseModel):
     error: Optional[bool] = None
 
 class StreamChatResponseDoc(BaseModel):
-    data: str = Field(..., description="流式返回的内容块（字符串）")
+    text: str = Field(..., description="流式返回的文本内容块（字符串）")
     event: Optional[str] = Field(None, description="SSE事件类型，如'end'表示结束，'error'表示错误")
+    metadata: Optional[dict] = Field(None, description="元数据信息，包含内容类型、时间戳等")
+    content_type: Optional[str] = Field(None, description="内容类型，如'text', 'markdown', 'code'等")
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
@@ -301,28 +303,72 @@ async def stream_chat(request: ChatRequest):
     """
     与指定的AI助手进行流式对话。流式响应会逐步返回AI助手的回复，提供更好的用户体验。
 
-    - 成功时：多次返回 {"data": "内容"}，最后返回 {"event": "end", "data": "[DONE]"}
-    - 错误时：返回 {"event": "error", "data": "错误信息"}
+    响应格式：
+    - 正常数据块：{"data": "内容", "content_type": "markdown", "metadata": {...}}
+    - 结束信号：{"event": "end", "data": "[DONE]", "metadata": {...}}
+    - 错误信号：{"event": "error", "data": "错误信息", "metadata": {...}}
+    
+    metadata字段包含：
+    - timestamp: 时间戳
+    - chat_id: 聊天会话ID
+    - agent_type: Agent类型
+    - chunk_index: 数据块索引（正常数据）
+    - total_chunks: 总数据块数（结束信号）
+    - error_code: 错误代码（错误信号）
     """
     chat_id = request.chat_id or str(uuid.uuid4())
     # 检查Agent管理器是否可用
     if not multi_agent_manager:
         async def error_gen():
-            yield {"data": f"Agent管理器未初始化", "event": "error"}
+            import json
+            import time
+            error_data = {
+                "text": "Agent管理器未初始化",
+                "event": "error",
+                "metadata": {
+                    "error_code": "AGENT_MANAGER_NOT_INITIALIZED"
+                }
+            }
+            yield f"{json.dumps(error_data, ensure_ascii=False)}\n\n"
         return EventSourceResponse(error_gen())
+    
     # 获取指定的Agent
     agent = multi_agent_manager.get_agent(request.agent_type)
     if not agent:
         async def error_gen():
-            yield {"data": f"Agent '{request.agent_type}' 不可用或初始化失败", "event": "error"}
+            import json
+            import time
+            error_data = {
+                "text": f"Agent '{request.agent_type}' 不可用或初始化失败",
+                "event": "error",
+                "metadata": {
+                    "error_code": "AGENT_NOT_AVAILABLE",
+                    "requested_agent": request.agent_type
+                }
+            }
+            yield f"{json.dumps(error_data, ensure_ascii=False)}\n\n"
         return EventSourceResponse(error_gen())
+    
     # 检查模型提供商管理器是否可用
     if not model_provider_manager:
         async def error_gen():
-            yield {"data": "模型提供商管理器未初始化", "event": "error"}
+            import json
+            import time
+            error_data = {
+                "text": "模型提供商管理器未初始化",
+                "event": "error",
+                "metadata": {
+                    "error_code": "MODEL_PROVIDER_NOT_INITIALIZED"
+                }
+            }
+            yield f"{json.dumps(error_data, ensure_ascii=False)}\n\n"
         return EventSourceResponse(error_gen())
     provider_name = request.provider_name if request.provider_name in model_provider_manager.list_configured_providers() else model_provider_manager.get_default_provider()
     def response_stream():
+        import json
+        import time
+        
+        chunk_index = 0
         for chunk in agent.stream_chat(
             message=request.message,
             chat_id=chat_id,
@@ -330,8 +376,30 @@ async def stream_chat(request: ChatRequest):
             provider_name=provider_name,
             model_name=request.model_name
         ):
-            yield {"data": chunk}
-        yield {"event": "end", "data": "[DONE]"}
+            # 构建JSON响应数据
+            response_data = {
+                "text": chunk,
+                "content_type": "markdown",  # 标记为Markdown内容
+                "metadata": {
+                    "chat_id": chat_id,
+                    "agent_type": request.agent_type,
+                    "chunk_index": chunk_index
+                }
+            }
+            # 直接返回JSON数据
+            yield f"{json.dumps(response_data, ensure_ascii=False)}\n\n"
+            chunk_index += 1
+        
+        # 发送结束信号
+        end_data = {
+            "event": "end",
+            "text": "[DONE]",
+            "metadata": {
+                "chat_id": chat_id
+            }
+        }
+        yield f"{json.dumps(end_data, ensure_ascii=False)}\n\n"
+    
     return EventSourceResponse(response_stream())
 
 
