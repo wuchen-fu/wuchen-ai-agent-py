@@ -47,6 +47,7 @@ class WritingAgent(BaseAgent):
     """
 
     AGENT_TYPE = "writing"
+    AGENT_NAME = "写作助手"
     DEFAULT_SYSTEM_PROMPT = system_prompt
 
     def __init__(self, config: Optional[Dict] = None):
@@ -183,11 +184,20 @@ class WritingAgent(BaseAgent):
             智能体的回复
         """
         try:
+            # 如果指定了提供商或模型，则重新初始化组件
+            if provider_name or model_name:
+                chat_model = self.get_chat_model(provider_name, model_name)
+                if chat_model:
+                    self._reinitialize_with_model(chat_model)
+            
             # 准备输入数据
             input_data = {"input": message}
 
             # 使用带历史记录的链进行调用
             config = {"configurable": {"session_id": chat_id}}
+            if user_id:
+                config["configurable"]["user_id"] = user_id
+                
             response = self.history_chain.invoke(input_data, config=config)
 
             # 返回响应内容
@@ -216,11 +226,20 @@ class WritingAgent(BaseAgent):
             智能体的回复片段
         """
         try:
+            # 如果指定了提供商或模型，则重新初始化组件
+            if provider_name or model_name:
+                chat_model = self.get_chat_model(provider_name, model_name)
+                if chat_model:
+                    self._reinitialize_with_model(chat_model)
+            
             # 准备输入数据
             input_data = {"input": message}
             
             # 使用带历史记录的链进行流式调用
             config = {"configurable": {"session_id": chat_id}}
+            if user_id:
+                config["configurable"]["user_id"] = user_id
+                
             for chunk in self.history_chain.stream(input_data, config=config):
                 # 处理不同类型的响应
                 if isinstance(chunk, dict):
@@ -254,11 +273,20 @@ class WritingAgent(BaseAgent):
             智能体的回复
         """
         try:
+            # 如果指定了提供商或模型，则重新初始化组件
+            if provider_name or model_name:
+                chat_model = self.get_chat_model(provider_name, model_name)
+                if chat_model:
+                    self._reinitialize_with_model(chat_model)
+            
             # 准备输入数据
             input_data = {"input": message}
 
             # 使用带历史记录的链进行调用
             config = {"configurable": {"session_id": chat_id}}
+            if user_id:
+                config["configurable"]["user_id"] = user_id
+                
             response = await self.history_chain.ainvoke(input_data, config=config)
 
             # 返回响应内容
@@ -287,11 +315,20 @@ class WritingAgent(BaseAgent):
             智能体的回复片段
         """
         try:
+            # 如果指定了提供商或模型，则重新初始化组件
+            if provider_name or model_name:
+                chat_model = self.get_chat_model(provider_name, model_name)
+                if chat_model:
+                    self._reinitialize_with_model(chat_model)
+            
             # 准备输入数据
             input_data = {"input": message}
             
             # 使用带历史记录的链进行流式调用
             config = {"configurable": {"session_id": chat_id}}
+            if user_id:
+                config["configurable"]["user_id"] = user_id
+                
             async for chunk in self.history_chain.astream(input_data, config=config):
                 # 处理不同类型的响应
                 if isinstance(chunk, dict):

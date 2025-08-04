@@ -19,6 +19,7 @@ class BaseAgent(ABC):
     
     # 子类需要重写的配置
     AGENT_TYPE = None
+    AGENT_NAME = None
 
     def __init__(self, config: Optional[Dict] = None):
         """
@@ -69,7 +70,8 @@ class BaseAgent(ABC):
         )
 
     @abstractmethod
-    def chat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:
+    def chat(self, message: str, chat_id: str, user_id: Optional[str] = None,
+             provider_name: Optional[str] = None, model_name: Optional[str] = None) -> str:
         """
         与智能体进行对话，由子类实现
         
@@ -77,6 +79,8 @@ class BaseAgent(ABC):
             message: 用户消息
             chat_id: 聊天ID
             user_id: 用户ID（可选）
+            provider_name: 模型提供商名称（可选）
+            model_name: 模型名称（可选）
             
         Returns:
             智能体的回复
@@ -84,7 +88,8 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    def stream_chat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> Iterator[str]:
+    def stream_chat(self, message: str, chat_id: str, user_id: Optional[str] = None,
+                    provider_name: Optional[str] = None, model_name: Optional[str] = None) -> Iterator[str]:
         """
         与智能体进行流式对话，由子类实现
         
@@ -92,6 +97,8 @@ class BaseAgent(ABC):
             message: 用户消息
             chat_id: 聊天ID
             user_id: 用户ID（可选）
+            provider_name: 模型提供商名称（可选）
+            model_name: 模型名称（可选）
             
         Yields:
             智能体的回复片段
@@ -99,7 +106,8 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    async def achat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> str:
+    async def achat(self, message: str, chat_id: str, user_id: Optional[str] = None,
+                    provider_name: Optional[str] = None, model_name: Optional[str] = None) -> str:
         """
         异步与智能体进行对话，由子类实现
         
@@ -107,6 +115,8 @@ class BaseAgent(ABC):
             message: 用户消息
             chat_id: 聊天ID
             user_id: 用户ID（可选）
+            provider_name: 模型提供商名称（可选）
+            model_name: 模型名称（可选）
             
         Returns:
             智能体的回复
@@ -114,7 +124,8 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    async def astream_chat(self, message: str, chat_id: str, user_id: Optional[str] = None) -> AsyncIterator[str]:
+    async def astream_chat(self, message: str, chat_id: str, user_id: Optional[str] = None,
+                           provider_name: Optional[str] = None, model_name: Optional[str] = None) -> AsyncIterator[str]:
         """
         异步与智能体进行流式对话，由子类实现
         
@@ -122,6 +133,8 @@ class BaseAgent(ABC):
             message: 用户消息
             chat_id: 聊天ID
             user_id: 用户ID（可选）
+            provider_name: 模型提供商名称（可选）
+            model_name: 模型名称（可选）
             
         Yields:
             智能体的回复片段

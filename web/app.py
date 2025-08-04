@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(project_root, '..'))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 import logging
 
 # 导入配置
@@ -50,6 +51,11 @@ app.add_middleware(
 
 # 包含API路由
 app.include_router(api_router)
+
+# 添加重定向路由以支持不同的主机访问方式
+@app.get("/")
+async def redirect_to_docs():
+    return RedirectResponse(url="/docs")
 
 @app.get("/health")
 async def health_check():

@@ -5,15 +5,14 @@ from typing import List, Optional, Iterator, AsyncIterator, Any
 from dotenv import find_dotenv, load_dotenv
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.utilities import SQLDatabase
+from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableWithMessageHistory
 from langchain_core.runnables.utils import ConfigurableFieldSpec
-from langchain_core.tools import BaseTool
 from langchain_openai.chat_models import ChatOpenAI
 
 from chat_memory.mongo_chat_memory import MongoChatMemory
 from tools.custom_toolkit_manage import CustomToolkitManage
 from web.agent.base_agent import BaseAgent
-from langchain_core.messages import BaseMessage
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -48,6 +47,7 @@ class DBAgent(BaseAgent):
     """
     
     AGENT_TYPE = "db"
+    AGENT_NAME = "数据查询助手"
 
     def __init__(self, config: Optional[dict] = None):
         """
